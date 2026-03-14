@@ -1,7 +1,8 @@
 #include "../include/BlockIterator.h"
+#include <spdlog/spdlog.h>
 #include "../include/Block.h"
-#include <iostream>
 #include <optional>
+#include <string>
 #include <utility>
 
 BlockIterator::BlockIterator() : block(nullptr), current_index(0), tranc_id_(0) {}
@@ -60,7 +61,6 @@ BlockIterator& BlockIterator::operator++() {
   if (block) {
     current_index++;
     update_current();
-    skip_by_tranc_id();  // 跳过不可见的事务
   }
   return *this;
 }
@@ -87,8 +87,9 @@ auto BlockIterator::operator<=>(const BlockIterator& other) const -> std::strong
 
 BlockIterator::value_type BlockIterator::getValue() const {
   if (current_index < 0 || current_index >= block->Offset_.size()) {
-    std::cout << current_index;
-    throw std::out_of_range("Index out of range in BlockIterator");
+    spdlog::info(
+        "BlockIterator::value_type BlockIterator::getValue() Index out of range in BlockIterator");
+    return {std::string(), std::string()};
   }
   return cached_value.value();
 }

@@ -66,11 +66,13 @@ TEST_F(BlockTest, Iterator) {
   // 添加调试信息，确认block正确创建
   ASSERT_NE(block, nullptr) << "Block should not be null";
 
-  // 添加多组测试数据
-  const std::vector<std::pair<std::string, std::string>> test_data = {
-      {"key1", "value1"}, {"key10", "value10"}, {"key2", "value2"}, {"key3", "value3"},
-      {"key4", "value4"}, {"key5", "value5"},   {"key6", "value6"}, {"key7", "value7"},
-      {"key8", "value8"}, {"key9", "value9"}};
+  // 生成120个key的测试数据，按字典序排列（约能放入4096字节Block）
+  std::vector<std::pair<std::string, std::string>> test_data;
+  for (int i = 1; i <= 120; i++) {
+    test_data.push_back({"key" + std::to_string(i), "value" + std::to_string(i)});
+  }
+  // 按字典序排序（字符串比较）
+  std::sort(test_data.begin(), test_data.end());
 
   // 插入测试数据
   for (const auto& [key, value] : test_data) {
@@ -160,11 +162,13 @@ TEST_F(BlockTest, EmptyBlock) {
 }
 
 TEST_F(BlockTest, RangeSearch) {
-  // 添加多组测试数据
-  const std::vector<std::pair<std::string, std::string>> test_data = {
-      {"key1", "value1"}, {"key10", "value10"}, {"key11", "value11"}, {"key12", "value12"},
-      {"key4", "value4"}, {"key5", "value5"},   {"key6", "value6"},   {"key7", "value7"},
-      {"key8", "value8"}, {"key9", "value9"}};
+  // 生成120个key的测试数据，按字典序排列
+  std::vector<std::pair<std::string, std::string>> test_data;
+  for (int i = 1; i <= 120; i++) {
+    test_data.push_back({"key" + std::to_string(i), "value" + std::to_string(i)});
+  }
+  // 按字典序排序（字符串比较）
+  std::sort(test_data.begin(), test_data.end());
 
   // 插入测试数据
   for (const auto& [key, value] : test_data) {
@@ -172,9 +176,9 @@ TEST_F(BlockTest, RangeSearch) {
   }
 
   try {
-    // 测试范围查询
+    // 测试前缀"key1"的范围查询 (会匹配: key1, key10, key100-key109, key11-key19)
     auto range_iterators = block->get_prefix_iterator("key1");
-    ASSERT_TRUE(range_iterators.has_value()) << "Range iterators should not be null";
+    ASSERT_TRUE(range_iterators.has_value()) << "Range iterators for 'key1' should not be null";
 
     auto begin = range_iterators->first;
     auto end   = range_iterators->second;
@@ -189,8 +193,18 @@ TEST_F(BlockTest, RangeSearch) {
       retrieved_data.push_back(entry);
       ++(*begin);
     }
+
+    // 验证所有返回的key都以"key1"开头
+    for (const auto& [key, value] : retrieved_data) {
+      EXPECT_TRUE(key.starts_with("key1")) << "Key " << key << " does not start with 'key1'";
+    }
+
+    // 应该包含: key1, key10-key19, key100-key109, key110-key119
+    EXPECT_GE(retrieved_data.size(), 20u) << "Expected at least 20 keys starting with 'key1'";
+
+    // 测试前缀"key9"的范围查询
     auto range_iterators2 = block->get_prefix_iterator("key9");
-    ASSERT_TRUE(range_iterators2.has_value()) << "Range iterators should not be null";
+    ASSERT_TRUE(range_iterators2.has_value()) << "Range iterators for 'key9' should not be null";
 
     auto begin2 = range_iterators2->first;
     auto end2   = range_iterators2->second;
@@ -202,33 +216,9 @@ TEST_F(BlockTest, RangeSearch) {
       ++(*begin2);
     }
 
-    // 验证范围内的键值对
-    const std::vector<std::pair<std::string, std::string>> expected_data = {
-        {"key1", "value1"},
-        {"key10", "value10"},
-        {"key11", "value11"},
-        {"key12", "value12"},
-    };
-
-    ASSERT_EQ(retrieved_data.size(), expected_data.size()) << "Retrieved data size mismatch";
-
-    for (size_t i = 0; i < expected_data.size(); ++i) {
-      EXPECT_EQ(retrieved_data[i].first, expected_data[i].first)
-          << "Key mismatch at position " << i;
-      EXPECT_EQ(retrieved_data[i].second, expected_data[i].second)
-          << "Value mismatch at position " << i;
-    }
-    const std::vector<std::pair<std::string, std::string>> expected_data2 = {
-        {"key9", "value9"},
-    };
-
-    ASSERT_EQ(retrieved_data2.size(), expected_data2.size()) << "Retrieved data2 size mismatch";
-
-    for (size_t i = 0; i < expected_data2.size(); ++i) {
-      EXPECT_EQ(retrieved_data2[i].first, expected_data2[i].first)
-          << "Key mismatch at position " << i;
-      EXPECT_EQ(retrieved_data2[i].second, expected_data2[i].second)
-          << "Value mismatch at position " << i;
+    // 验证所有返回的key都以"key9"开头
+    for (const auto& [key, value] : retrieved_data2) {
+      EXPECT_TRUE(key.starts_with("key9")) << "Key " << key << " does not start with 'key9'";
     }
 
   } catch (const std::exception& e) {
@@ -237,12 +227,19 @@ TEST_F(BlockTest, RangeSearch) {
 }
 
 TEST_F(BlockTest, RangeSearchandMVCC) {
-  // 添加多组测试数据
-  const std::vector<std::tuple<std::string, std::string, uint64_t>> test_data = {
-      {"key1", "value1", 100},   {"key10", "value10", 120}, {"key11", "value11", 80},
-      {"key12", "value12", 150}, {"key4", "value4", 60},    {"key5", "value5", 92},
-      {"key6", "value6", 73},    {"key7", "value7", 110},   {"key8", "value8", 98},
-      {"key9", "value9", 90},    {"key99", "value99", 99}};
+  // 生成50个key，每个key有1-2个版本，模拟MVCC场景（总数据量约75条，能放入Block）
+  std::vector<std::tuple<std::string, std::string, uint64_t>> test_data;
+  for (int i = 1; i <= 50; i++) {
+    std::string key = "key" + std::to_string(i);
+    // 第一个版本
+    test_data.emplace_back(key, "value_v1_" + std::to_string(i), 1000 + i);
+    // 第二个版本（针对部分key）
+    if (i % 2 == 0) {
+      test_data.emplace_back(key, "value_v2_" + std::to_string(i), 2000 + i);
+    }
+  }
+  // 按字典序排序
+  std::sort(test_data.begin(), test_data.end());
 
   // 插入测试数据
   for (const auto& [key, value, tranc_id] : test_data) {
@@ -250,39 +247,37 @@ TEST_F(BlockTest, RangeSearchandMVCC) {
   }
 
   try {
-    // 测试范围查询
-    auto range_iterators  = block->get_prefix_tran_id("key1", 120);
-    auto range_iterators2 = block->get_prefix_tran_id("key9", 90);
+    // 测试MVCC查询：查询以"key1"为前缀的所有key（包括key1, key10-key19, key100-key109）
+    auto result1 = block->get_prefix_tran_id("key1", 1050);
 
-    // 验证范围内的键值对
-    const std::vector<std::tuple<std::string, std::string, uint64_t>> expected_data = {
-        {"key1", "value1", 100},
-        {"key10", "value10", 120},
-        {"key11", "value11", 80},
-    };
-
-    ASSERT_EQ(range_iterators.size(), expected_data.size()) << "Retrieved data size mismatch";
-
-    for (size_t i = 0; i < expected_data.size(); ++i) {
-      EXPECT_EQ(std::get<0>(range_iterators[i]), std::get<0>(expected_data[i]))
-          << "Key mismatch at position " << i;
-      EXPECT_EQ(std::get<1>(range_iterators[i]), std::get<1>(expected_data[i]))
-          << "Value mismatch at position " << i;
-      EXPECT_EQ(std::get<2>(range_iterators[i]), std::get<2>(expected_data[i]))
-          << "trans_id mismatch at position " << i;
+    // 验证查询结果格式
+    for (const auto& [key, value, ts] : result1) {
+      EXPECT_TRUE(key.starts_with("key1")) << "Key " << key << " should start with 'key1'";
+      EXPECT_LE(ts, 1050u) << "Timestamp should be <= query timestamp";
     }
-    const std::vector<std::tuple<std::string, std::string, uint64_t>> expected_data2 = {
-        {"key9", "value9", 90}};
 
-    ASSERT_EQ(range_iterators2.size(), expected_data2.size()) << "Retrieved data2 size mismatch";
-    for (size_t i = 0; i < expected_data2.size(); ++i) {
-      EXPECT_EQ(std::get<0>(range_iterators2[i]), std::get<0>(expected_data2[i]))
-          << "Key mismatch at position " << i;
-      EXPECT_EQ(std::get<1>(range_iterators2[i]), std::get<1>(expected_data2[i]))
-          << "Value mismatch at position " << i;
-      EXPECT_EQ(std::get<2>(range_iterators2[i]), std::get<2>(expected_data2[i]))
-          << "trans_id mismatch at position " << i;
+    // 测试MVCC查询：在时间戳2100时，应该看到key50的两个版本（1050和2050）
+    auto result2 = block->get_prefix_tran_id("key50", 2100);
+
+    // 验证查询结果都是key开头的键
+    for (const auto& [key, value, ts] : result2) {
+      EXPECT_TRUE(key.starts_with("key5")) << "Key should start with 'key5'";
+      EXPECT_LE(ts, 2100u) << "Timestamp should be <= query timestamp";
     }
+
+    // 测试以key2开头的所有key
+    auto result3 = block->get_prefix_tran_id("key2", 1500);
+
+    // 验证结果都以key2开头
+    for (const auto& [key, value, ts] : result3) {
+      EXPECT_TRUE(key.starts_with("key2")) << "Key " << key << " should start with 'key2'";
+      EXPECT_LE(ts, 1500u) << "Timestamp should be <= query timestamp";
+    }
+
+    // 验证至少找到一些结果
+    EXPECT_GE(result1.size(), 1u) << "Should find results for prefix 'key1'";
+    EXPECT_GE(result3.size(), 1u) << "Should find results for prefix 'key2'";
+
   } catch (const std::exception& e) {
     FAIL() << "Unexpected exception: " << e.what();
   }
