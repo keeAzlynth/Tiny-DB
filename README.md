@@ -18,62 +18,6 @@
 - **并发安全**：支持多线程并发操作
 - **完整测试**：100% 测试覆盖率，确保系统稳定性
 
-## 架构设计
-
-### 系统架构图
-
-```mermaid
-graph TB
-    A[客户端请求] --> B[MemTable 内存表]
-    B --> C{内存表满?}
-    C -->|否| D[跳表操作]
-    C -->|是| E[刷写到磁盘]
-    E --> F[Block 数据块]
-    F --> G[BlockMeta 元数据]
-    
-    D --> H[Skiplist 跳表]
-    H --> I[节点管理]
-    
-    G --> J[偏移量索引]
-    F --> K[序列化存储]
-    
-    subgraph "内存层"
-        B
-        H
-        I
-    end
-    
-    subgraph "存储层"
-        F
-        G
-        J
-        K
-    end
-```
-
-### 数据流程图
-
-```mermaid
-sequenceDiagram
-    participant Client as 客户端
-    participant MT as MemTable
-    participant SL as Skiplist
-    participant BK as Block
-    participant BM as BlockMeta
-    
-    Client->>MT: 写入请求
-    MT->>SL: 插入数据
-    SL->>SL: 跳表查找位置
-    SL-->>MT: 插入完成
-    MT-->>Client: 响应成功
-    
-    Note over MT: 内存表达到阈值
-    MT->>BK: 序列化数据
-    BK->>BM: 生成元数据
-    BM->>BK: 写入磁盘
-    BK-->>MT: 刷写完成
-```
-
 ## 项目结构
 
 ```
@@ -98,73 +42,6 @@ LSM/
 └── README.md                 # 项目说明
 ```
 
-## 核心模块
-
-### 1. Skiplist（跳表）
-
-跳表是 LSM 存储引擎的核心数据结构，提供高效的有序数据存储。
-
-**主要功能：**
-- 支持 O(log n) 时间复杂度的增删改查操作
-- 实现标准迭代器接口，支持范围查询
-- 集成事务 ID 支持，保证数据一致性
-- 多级索引结构，优化查找性能
-
-**接口示例：**
-```cpp
-class Skiplist {
-public:
-    bool insert(const std::string& key, const std::string& value, uint64_t txn_id);
-    bool remove(const std::string& key, uint64_t txn_id);
-    bool search(const std::string& key, std::string& value);
-    Iterator begin();
-    Iterator end();
-};
-```
-
-### 2. MemTable（内存表）
-
-基于跳表实现的内存表，作为 LSM 树的 L0 层。
-
-**主要功能：**
-- 基于跳表的高效内存存储
-- 支持批量操作，提高写入吞吐量
-- 实现读写锁机制，保证并发安全
-- 自动触发刷写机制，控制内存使用
-
-**特性：**
-- 写入优化：追加写入模式，避免随机 I/O
-- 并发控制：支持多读单写的并发模式
-- 内存管理：智能内存分配和回收
-
-### 3. Block（数据块）
-
-负责数据的持久化存储和高效访问。
-
-**主要功能：**
-- 数据序列化与反序列化
-- 支持二分查找算法，提高查询效率
-- 实现双向迭代器接口
-- 数据压缩和编码优化
-
-**存储格式：**
-```
-Block Layout:
-┌─────────────┬─────────────┬─────────────┬─────────────┐
-│   Header    │    Data     │   Index     │   Footer    │
-│  (固定长度)  │  (变长数据)  │  (索引信息)  │  (校验信息)  │
-└─────────────┴─────────────┴─────────────┴─────────────┘
-```
-
-### 4. BlockMeta（块元数据）
-
-管理数据块的元信息，支持快速索引和查找。
-
-**主要功能：**
-- 块元数据的编码与解码
-- 首尾键值对管理，支持范围查询优化
-- 文件偏移量管理，实现快速定位
-- 统计信息维护，支持查询优化
 
 ## 环境要求
 
@@ -232,39 +109,8 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 # Release 构建（性能优化）
 cmake .. -DCMAKE_BUILD_TYPE=Release
 
-# 启用代码覆盖率
-cmake .. -DENABLE_COVERAGE=ON
-
-# 启用静态分析
-cmake .. -DENABLE_STATIC_ANALYSIS=ON
-
 # 启用 ASAN（Address Sanitizer）
 cmake .. -DENABLE_ASAN=ON
-```
-
-## 测试
-
-### 测试架构
-
-本项目采用分层测试策略：
-
-```mermaid
-graph TB
-    A[单元测试] --> B[模块测试]
-    B --> C[集成测试]
-    C --> D[性能测试]
-    
-    subgraph "测试类型"
-        E[功能测试]
-        F[边界测试]
-        G[压力测试]
-        H[并发测试]
-    end
-    
-    A --> E
-    B --> F
-    C --> G
-    D --> H
 ```
 
 ### 运行测试
@@ -295,17 +141,6 @@ cmake -G Ninja -B build
 ctest --output-junit test_results.xml
 ```
 
-### 测试覆盖率
-
-查看测试覆盖率报告：
-```bash
-# 生成覆盖率报告
-make coverage
-
-# 查看 HTML 报告
-open coverage/index.html
-```
-
 ## 性能基准
 
 ### 基准测试结果
@@ -319,45 +154,7 @@ open coverage/index.html
 | 随机读取 | 30,000 | - | - |
 | 范围查询 | 15,000 | - | - |
 
-### 运行基准测试
 
-```bash
-cd build
-./benchmark/lsm_benchmark --benchmark_format=json
-```
-
-## 使用示例
-
-### 基本用法
-
-```cpp
-#include "memtable.h"
-#include "Skiplist.h"
-
-int main() {
-    // 创建内存表
-    MemTable memtable;
-    
-    // 插入数据
-    memtable.put("key1", "value1", 1);
-    memtable.put("key2", "value2", 2);
-    
-    // 查询数据
-    std::string value;
-    if (memtable.get("key1", value)) {
-        std::cout << "Found: " << value << std::endl;
-    }
-    
-    // 范围查询
-    auto it = memtable.scan("key1", "key2");
-    while (it.valid()) {
-        std::cout << it.key() << " -> " << it.value() << std::endl;
-        it.next();
-    }
-    
-    return 0;
-}
-```
 
 ## 贡献指南
 
