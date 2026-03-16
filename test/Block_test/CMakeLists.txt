@@ -24,6 +24,20 @@ if(ENABLE_ASAN AND ENABLE_VALGRIND)
     message(FATAL_ERROR "ASAN 和 Valgrind 不能同时启用")
 endif()
 
+# Try include top-level generated options so this subproject respects top-level switches.
+if(EXISTS ${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+    include(${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+endif()
+
+if(NOT DEFINED ENABLE_BLOCK_TEST)
+    set(ENABLE_BLOCK_TEST ON)
+endif()
+
+if(NOT ENABLE_BLOCK_TEST)
+    message(STATUS "Block_test disabled (ENABLE_BLOCK_TEST=OFF)")
+    return()
+endif()
+
 # 查找 GTest 包
 find_package(GTest REQUIRED)
 

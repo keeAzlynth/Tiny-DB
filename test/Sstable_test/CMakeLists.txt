@@ -41,6 +41,22 @@ if(ENABLE_TSAN AND ENABLE_ASAN)
     message(FATAL_ERROR "ThreadSanitizer 和 AddressSanitizer 不能同时启用")
 endif()
 
+# Try include top-level generated options so this subproject respects top-level switches.
+if(EXISTS ${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+    include(${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+endif()
+
+# If the option is not defined (user configures this test directory directly),
+# default to ON so local per-test builds remain convenient.
+if(NOT DEFINED ENABLE_SSTABLE_TEST)
+    set(ENABLE_SSTABLE_TEST ON)
+endif()
+
+if(NOT ENABLE_SSTABLE_TEST)
+    message(STATUS "Sstable_test disabled (ENABLE_SSTABLE_TEST=OFF)")
+    return()
+endif()
+
 # 查找 GTest 包
 find_package(GTest REQUIRED)
 

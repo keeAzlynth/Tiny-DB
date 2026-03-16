@@ -39,6 +39,20 @@ if(ENABLE_TSAN AND ENABLE_ASAN)
     message(FATAL_ERROR "ThreadSanitizer 和 AddressSanitizer 不能同时启用")
 endif()
 
+# Try include top-level generated options so this subproject respects top-level switches.
+if(EXISTS ${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+    include(${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+endif()
+
+if(NOT DEFINED ENABLE_MEMTABLE_TEST)
+    set(ENABLE_MEMTABLE_TEST ON)
+endif()
+
+if(NOT ENABLE_MEMTABLE_TEST)
+    message(STATUS "Memtable_test disabled (ENABLE_MEMTABLE_TEST=OFF)")
+    return()
+endif()
+
 # 查找 GTest
 find_package(GTest REQUIRED)
 

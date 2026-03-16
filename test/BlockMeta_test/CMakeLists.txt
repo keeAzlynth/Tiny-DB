@@ -7,6 +7,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address  -g")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
 
+# Try include top-level generated options so this subproject respects top-level switches.
+if(EXISTS ${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+    include(${CMAKE_SOURCE_DIR}/../LSMTestOptions.cmake)
+endif()
+
+if(NOT DEFINED ENABLE_BLOCKMETA_TEST)
+    set(ENABLE_BLOCKMETA_TEST ON)
+endif()
+
+if(NOT ENABLE_BLOCKMETA_TEST)
+    message(STATUS "BlockMeta_test disabled (ENABLE_BLOCKMETA_TEST=OFF)")
+    return()
+endif()
+
 # 查找 GTest 包
 find_package(GTest REQUIRED)
 include_directories(${GTEST_INCLUDE_DIRS})
