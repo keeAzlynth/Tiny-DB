@@ -1,6 +1,5 @@
 #pragma once
 #include "Skiplist.h"
-#include "Sstable.h"
 #include <cstddef>
 #include <list>
 #include <memory>
@@ -10,25 +9,27 @@
 #include <string>
 
 class MemTableIterator;
-class Sstbuild;
 bool operator==(const MemTableIterator& lhs, const MemTableIterator& rhs) noexcept;
 
 class MemTableIterator : public BaseIterator {
  public:
+  friend class SstIterator;
+
   friend bool operator==(const MemTableIterator& lhs, const MemTableIterator& rhs) noexcept;
   using valuetype = std::pair<std::string, std::string>;
+  MemTableIterator();
   MemTableIterator(std::vector<SerachIterator> iter, const uint64_t max_transaction_id);
   MemTableIterator(const SkiplistIterator& iter, const uint64_t max_transaction_id);
   ~MemTableIterator() = default;
 
   bool valid() const override;
 
-  auto              operator<=>(const BaseIterator& other) const;
+  auto              operator<=>(const MemTableIterator& other) const;
   valuetype         operator*() const override;
   pvaluetype        operator->() const;
   MemTableIterator& operator++() override;
 
-  bool         isEnd() override;
+  bool         isEnd() const override;
   uint64_t     get_tranc_id() const override;
   IteratorType type() const override;
   valuetype    getValue() const;
@@ -47,6 +48,7 @@ class MemTableIterator : public BaseIterator {
 
 class MemTable {
   friend class MemTableIterator;  // 让 MemTableIterator 可以访问私有成员
+  friend class TranContext;
 
  public:
   MemTable();
@@ -64,8 +66,8 @@ class MemTable {
 
   SkiplistIterator cur_get(const std::string& key, const uint64_t transaction_id = 0);
   SkiplistIterator fix_get(const std::string& key, const uint64_t transaction_id = 0);
-  std::vector<std::tuple<std::string, std::optional<std::string>, std::optional<uint64_t>>>
-         get_batch(const std::vector<std::string>& key_s, const uint64_t transaction_id = 0);
+  std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> get_batch(
+      const std::vector<std::string>& key_s, const uint64_t transaction_id = 0);
   size_t get_node_num() const;
   size_t get_cur_size();
   size_t get_fixed_size();
@@ -74,6 +76,7 @@ class MemTable {
   void   remove_mutex(const std::string& key, const uint64_t transaction_id = 0);
   void   remove_batch(const std::vector<std::string>& key_pairs, const uint64_t transaction_id = 0);
   bool   IsFull();
+  std::unique_ptr<Skiplist>            flushtodisk();
   std::unique_ptr<Skiplist>            flush();
   std::list<std::unique_ptr<Skiplist>> flushsync();
   void                                 frozen_cur_table();

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -6,6 +8,9 @@ enum class IteratorType {
   MemTableIterator,
   BlockIterator,
   SstIterator,
+  TwoMergeIterator,
+  ConcactIterator,
+  LevelIterator,
 };
 
 class BaseIterator {
@@ -18,7 +23,7 @@ class BaseIterator {
   virtual BaseIterator& operator++()  = 0;
   auto                  operator<=>(const BaseIterator& other) const;
   virtual IteratorType  type() const         = 0;
-  virtual bool          isEnd()              = 0;
+  virtual bool          isEnd() const        = 0;
   virtual valuetype     operator*() const    = 0;
   virtual uint64_t      get_tranc_id() const = 0;
 };

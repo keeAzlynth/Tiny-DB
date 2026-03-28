@@ -11,8 +11,10 @@ bool operator==(const MemTableIterator& lhs, const MemTableIterator& rhs) noexce
          lhs.queue_.top().value_ == rhs.queue_.top().value_ &&
          lhs.queue_.top().transaction_id_ == rhs.queue_.top().transaction_id_;
 }
+MemTableIterator::MemTableIterator()
+    : current_value_(nullptr), list_iter_(nullptr), max_transaction_id(0) {}
 MemTableIterator::MemTableIterator(std::vector<SerachIterator> iter, const uint64_t transaction_id)
-    : max_transaction_id(0) {
+    : max_transaction_id(transaction_id) {
   for (auto& it : iter) {
     queue_.push(it);
   }
@@ -31,17 +33,13 @@ MemTableIterator::MemTableIterator(const SkiplistIterator& iter, const uint64_t 
   list_iter_ = std::make_shared<SkiplistIterator>(iter);
 }
 
-auto MemTableIterator::operator<=>(const BaseIterator& other) const {
-  if (other.type() != IteratorType::MemTableIterator) {
-    return std::strong_ordering::less;
+auto MemTableIterator::operator<=>(const MemTableIterator& other) const {
+  if (queue_.empty() || other.queue_.empty()) {
+    return queue_.empty()
+               ? (other.queue_.empty() ? std::strong_ordering::equal : std::strong_ordering::less)
+               : std::strong_ordering::greater;
   }
-  const MemTableIterator& other_iter = static_cast<const MemTableIterator&>(other);
-  if (queue_.empty() || other_iter.queue_.empty()) {
-    return queue_.empty() ? (other_iter.queue_.empty() ? std::strong_ordering::equal
-                                                       : std::strong_ordering::less)
-                          : std::strong_ordering::greater;
-  }
-  return queue_.top() <=> other_iter.queue_.top();
+  return queue_.top() <=> other.queue_.top();
 }
 
 MemTableIterator::valuetype MemTableIterator::operator*() const {
@@ -71,7 +69,7 @@ MemTableIterator& MemTableIterator::operator++() {
   }
   return *this;
 }
-bool MemTableIterator::isEnd() {
+bool MemTableIterator::isEnd() const {
   return queue_.empty();
 }
 uint64_t MemTableIterator::get_tranc_id() const {
@@ -115,9 +113,6 @@ void MemTableIterator::update_current_key_value() const {
   }
 }
 void MemTableIterator::skip_transaction_id() {
-  if (max_transaction_id == 0) {
-    return;
-  }
   while (!queue_.empty() && queue_.top().transaction_id_ > max_transaction_id) {
     queue_.pop();
   }
@@ -204,16 +199,16 @@ SkiplistIterator MemTable::fix_get(const std::string& key, const uint64_t transa
   return SkiplistIterator();
 }
 
-std::vector<std::tuple<std::string, std::optional<std::string>, std::optional<uint64_t>>>
-MemTable::get_batch(const std::vector<std::string>& key_pairs, const uint64_t transaction_id) {
-  std::vector<std::tuple<std::string, std::optional<std::string>, std::optional<uint64_t>>> result;
+std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> MemTable::get_batch(
+    const std::vector<std::string>& key_pairs, const uint64_t transaction_id) {
+  std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> result;
   result.reserve(key_pairs.size());
   for (const auto& pair : key_pairs) {
     auto value = get(pair, transaction_id);
     if (value.has_value()) {  // 添加空值检查
       result.emplace_back(pair, value->first, value->second);
     } else {
-      result.emplace_back(pair, std::nullopt, std::nullopt);
+      result.emplace_back(pair, std::nullopt, transaction_id);
     }
   }
   return result;
@@ -263,6 +258,12 @@ void MemTable::remove_batch(const std::vector<std::string>& key_pairs,
 }
 bool MemTable::IsFull() {
   return current_table->get_size() > Global_::MAX_MEMTABLE_SIZE_PER_TABLE;
+}
+std::unique_ptr<Skiplist> MemTable::flushtodisk() {
+  std::unique_lock<std::shared_mutex> lock(cur_lock_);
+  auto                                temp = std::move(fixed_tables.front());
+  fixed_bytes -= temp->get_size();
+  return temp;
 }
 
 // This function is used to flush the current memtable to disk,just for test

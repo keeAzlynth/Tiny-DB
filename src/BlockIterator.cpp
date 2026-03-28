@@ -46,7 +46,7 @@ BlockIterator::BlockIterator(std::shared_ptr<Block> block_, size_t index, uint64
 
 bool BlockIterator::is_end() {
   if (block) {
-    return current_index >= block->Offset_.size();
+    return current_index == block->Offset_.size();
   }
   return true;
 }

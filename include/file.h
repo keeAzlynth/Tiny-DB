@@ -59,6 +59,7 @@ class FileObj {
   bool append(std::vector<uint8_t>& buf);
 
   bool sync();
+  void close();
 
   void validate_read_bounds(size_t offset, size_t data_size) const;
 };

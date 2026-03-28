@@ -1,4 +1,5 @@
 [TOC]
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keeAzlynth/Tiny-DB)
 # LSM 存储引擎
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/your-repo/lsm)
