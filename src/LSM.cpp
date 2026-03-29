@@ -249,9 +249,6 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::sst_get_(const std::
 }
 
 uint64_t LSM_Engine::put(const std::string& key, const std::string& value, uint64_t tranc_id) {
-  if (!memtable) {
-    spdlog::info("uint64_t LSM_Engine::put error:memtable is nullptr");
-  }
   memtable->put_mutex(key, value, tranc_id);
   // 如果 memtable 太大，需要刷新到磁盘
   if (memtable->get_total_size() >= Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
@@ -329,6 +326,7 @@ uint64_t LSM_Engine::flush() {
   // 4. 将 memtable 中最旧的表写入 SST
   std::vector<uint64_t> flushed_tranc_ids;
   auto                  sst_path = get_sst_path(new_sst_id, 0);
+  memtable->frozen_cur_table();
   auto                  res      = memtable->flushtodisk();
   for (auto i = res->begin(); i != res->end(); ++i) {
     auto kv       = i.getValue();
@@ -499,8 +497,8 @@ void LSM_Engine::set_tran_manager(std::shared_ptr<TranManager> tran_manager) {
 
 LSM::LSM(std::string path)
     : engine(std::make_shared<LSM_Engine>(path)),
-      tran_manager_(std::make_shared<TranManager>(path)) {
-  tran_manager_->set_engine(engine);
+      tran_manager_(std::make_shared<TranManager>(path)){
+ tran_manager_->set_engine(engine);
   engine->set_tran_manager(tran_manager_);
   auto check_recover_res = tran_manager_->check_recover();
   for (auto& [tranc_id, records] : check_recover_res) {

@@ -135,6 +135,11 @@ bool FileObj::sync() {
 
   return m_file->sync();
 }
+void FileObj::close() {
+  if (m_file) {
+    m_file->close();
+  }
+}
 
 void FileObj::validate_read_bounds(size_t offset, size_t data_size) const {
   const size_t file_size = m_file->size();

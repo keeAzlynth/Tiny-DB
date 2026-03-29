@@ -131,10 +131,7 @@ bool MemTableIterator::top_value_legal() const {
   }
 }
 
-MemTable::MemTable() {
-  current_table = std::move(std::make_unique<Skiplist>());
-  fixed_bytes   = 0;
-  cur_status    = SkiplistStatus::kNormal;
+MemTable::MemTable():current_table(std::move(std::make_unique<Skiplist>())),fixed_bytes(0),cur_status(Global_::SkiplistStatus::kNormal) {
 }
 
 bool MemTableIterator::valid() const {

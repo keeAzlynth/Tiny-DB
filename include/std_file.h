@@ -10,6 +10,7 @@ class StdFile {
   StdFile() {}
   ~StdFile() {
     if (file_.is_open()) {
+      file_.flush();
       close();
     }
   }

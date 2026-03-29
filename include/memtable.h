@@ -83,18 +83,12 @@ class MemTable {
   MemTableIterator                     begin();
   MemTableIterator                     end();
   MemTableIterator prefix_serach(const std::string& key, const uint64_t transaction_id = 0);
-  enum class SkiplistStatus {
-    kNormal,
-    KFreezing,
-    kFrozen,
-  };
-
  private:
   std::unique_ptr<Skiplist>            current_table;  // 活跃 SkipList
   std::list<std::unique_ptr<Skiplist>> fixed_tables;   // 不可写的 SkipList==InmutTable
   size_t                               fixed_bytes;    // fixed_tables的跳表的大小
   std::shared_mutex                    fix_lock_;      // 保护当前跳表的锁
   std::shared_mutex                    cur_lock_;
-  std::atomic<SkiplistStatus>          cur_status;  // 当前跳表的状态
+  std::atomic<Global_::SkiplistStatus>          cur_status;  // 当前跳表的状态
   // 保护当前跳表的读写锁
 };

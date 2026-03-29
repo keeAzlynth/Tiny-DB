@@ -1,6 +1,7 @@
 #include "../../include/memtable.h"
 #include "../../include/Blockcache.h"
 #include "../../include/SstableIterator.h"
+#include "../../include/Sstable.h"
 #include <gtest/gtest.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
@@ -19,6 +20,12 @@ class SstableTest : public ::testing::Test {
     // 初始化 BlockCache
     block_cache = std::make_shared<BlockCache>(4096, 2);
     memtable    = std::make_unique<MemTable>();
+    if (std::filesystem::exists(tmp_path1)&& std::filesystem::exists(tmp_path2)) {
+    }
+    else {
+      std::filesystem::create_directory(tmp_path1);
+      std::filesystem::create_directory(tmp_path2);
+    }
   }
 
   void TearDown() override {
@@ -57,10 +64,9 @@ class SstableTest : public ::testing::Test {
   std::shared_ptr<Sstable> build_sstable(
       const std::vector<std::tuple<std::string, std::string, uint64_t>>& data,
       const std::string& path, size_t block_size = 4096) {
-    if (std::filesystem::exists(path)) {
+if (std::filesystem::exists(path)) {
       std::filesystem::remove(path);
     }
-
     Sstbuild builder(block_size, true);
 
     // 将所有数据放入memtable
@@ -85,8 +91,8 @@ class SstableTest : public ::testing::Test {
 
   std::unique_ptr<MemTable>   memtable;
   std::shared_ptr<BlockCache> block_cache;
-  std::string tmp_path1 = "/root/LSM/tmp/lsm_test_sstable.dat";  // 改成你的绝对路径，方便调试
-  std::string tmp_path2 = "/root/LSM/tmp/lsm_test_sstable2.dat";
+  std::string tmp_path1 = "../../../lsm/lsm_test_sstable.dat";  // 改成你的绝对路径，方便调试
+  std::string tmp_path2 = "../../../lsm/lsm_test_sstable2.dat";
 };
 
 // 使用大量数据并强制产生多个 block，验证前缀查询和返回结果正确性

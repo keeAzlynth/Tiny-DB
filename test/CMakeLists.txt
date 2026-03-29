@@ -24,3 +24,7 @@ endif()
 if(ENABLE_SSTABLE_TEST)
   add_subdirectory(Sstable_test)
 endif()
+
+if(ENABLE_LSM_TEST)
+  add_subdirectory(LSM_test)
+endif()
