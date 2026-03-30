@@ -2,6 +2,8 @@
 #include <spdlog/logger.h>
 #include "spdlog/spdlog.h"
 #include <memory>
+#include <mutex>
+#include <shared_mutex>
 #include <utility>
 bool operator==(const MemTableIterator& lhs, const MemTableIterator& rhs) noexcept {
   if (lhs.queue_.empty() || rhs.queue_.empty()) {
@@ -149,7 +151,6 @@ void MemTable::put_mutex(const std::string& key, const std::string& value,
     current_table->Insert(key, value, transaction_id);
   }
   if (current_table->get_size() > Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
-    std::unique_lock<std::shared_mutex> lock(fix_lock_);
     frozen_cur_table();
   }
 }
@@ -214,11 +215,9 @@ std::size_t MemTable::get_node_num() const {
   return current_table->getnodecount();
 }
 std::size_t MemTable::get_fixed_size() {
-  std::shared_lock<std::shared_mutex> lock(fix_lock_);
   return fixed_bytes;
 }
 std::size_t MemTable::get_cur_size() {
-  std::shared_lock<std::shared_mutex> lock(cur_lock_);
   return current_table->get_size();
 }
 std::size_t MemTable::get_total_size() {
@@ -227,7 +226,7 @@ std::size_t MemTable::get_total_size() {
 
 void MemTable::remove(const std::string& key, const uint64_t transaction_id) {
   current_table->Insert(key, std::string(), transaction_id);
-  if (current_table->get_size() > Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
+  if (current_table->get_size() >= Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
     frozen_cur_table();
   }
 }
@@ -236,8 +235,7 @@ void MemTable::remove_mutex(const std::string& key, const uint64_t transaction_i
     std::unique_lock<std::shared_mutex> lock(cur_lock_);
     current_table->Insert(key, std::string(), transaction_id);
   }
-  if (fixed_tables.size() > Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
-    std::unique_lock<std::shared_mutex> lock(fix_lock_);
+  if (fixed_tables.size() >= Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
     frozen_cur_table();
   }
 }
@@ -248,16 +246,15 @@ void MemTable::remove_batch(const std::vector<std::string>& key_pairs,
   for (const auto& pair : key_pairs) {
     current_table->Insert(pair, std::string(), transaction_id);
   }
-  if (current_table->get_size() > Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
-    std::unique_lock<std::shared_mutex> lock(fix_lock_);
+  if (current_table->get_size() >= Global_::MAX_MEMTABLE_SIZE_PER_TABLE) {
     frozen_cur_table();
   }
 }
 bool MemTable::IsFull() {
-  return current_table->get_size() > Global_::MAX_MEMTABLE_SIZE_PER_TABLE;
+  return current_table->get_size() >= Global_::MAX_MEMTABLE_SIZE_PER_TABLE;
 }
 std::unique_ptr<Skiplist> MemTable::flushtodisk() {
-  std::unique_lock<std::shared_mutex> lock(cur_lock_);
+  std::unique_lock<std::shared_mutex> lock(fix_lock_);
   auto                                temp = std::move(fixed_tables.front());
   fixed_bytes -= temp->get_size();
   return temp;
@@ -285,7 +282,7 @@ void MemTable::frozen_cur_table() {
   auto                                new_table = std::make_unique<Skiplist>();
   fixed_bytes += current_table->get_size();
   std::unique_lock<std::shared_mutex> lock2(fix_lock_);
-  fixed_tables.push_front(std::move(current_table));
+  fixed_tables.push_back(std::move(current_table));
   current_table = std::move(new_table);
 }
 

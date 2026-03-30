@@ -491,8 +491,8 @@ size_t LSM_Engine::get_sst_size(size_t level) {
   }
 }
 
-void LSM_Engine::set_tran_manager(std::shared_ptr<TranManager> tran_manager) {
-  this->tran_manager = tran_manager;
+void LSM_Engine::set_tran_manager(std::shared_ptr<TranManager> tran_manager_) {
+  tran_manager = tran_manager_;
 }
 
 LSM::LSM(std::string path)
@@ -552,9 +552,7 @@ std::vector<std::pair<std::string, std::optional<std::string>>> LSM::get_batch(
 }
 
 void LSM::put(const std::string& key, const std::string& value) {
-  spdlog::info("LSM::put called");
   auto tranc_id = tran_manager_->getNextTransactionId();
-  spdlog::info("tranc_id = {}", tranc_id);
   engine->put(key, value, tranc_id);
 }
 
@@ -581,7 +579,7 @@ void LSM::flush() {
 }
 
 void LSM::flush_all() {
-  while (engine->memtable->get_total_size() > 0) {
+  while (engine->memtable->get_node_num() > 0) {
     auto max_tranc_id = engine->flush();
     // tran_manager_->update_checkpoint_tranc_id(max_tranc_id);
   }

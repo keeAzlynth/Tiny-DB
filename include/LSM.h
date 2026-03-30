@@ -58,7 +58,7 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
 
   static size_t get_sst_size(size_t level);
 
-  void set_tran_manager(std::shared_ptr<TranManager> tran_manager);
+  void set_tran_manager(std::shared_ptr<TranManager> tran_manager_);
 
  private:
   void                                  full_compact(size_t src_level);
