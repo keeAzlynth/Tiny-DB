@@ -81,6 +81,7 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(const std::strin
   auto mem_res = memtable->get(key, tranc_id);
   if (mem_res.has_value()) {
     if (mem_res.value().first.empty()) {
+      std::print("mem\n");
       return std::nullopt;  // 空值表示被删除
     }
     return std::pair<std::string, uint64_t>{mem_res.value().first, mem_res.value().second};
@@ -95,6 +96,7 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(const std::strin
     auto  sst_iterator = sst->get_Iterator(key, tranc_id);
     if (sst_iterator.valid()) {
       if (sst_iterator->second.empty()) {
+        std::print("{}sst\n", sst_id);
         return std::nullopt;  // 空值表示被删除
       }
       return std::pair<std::string, uint64_t>{sst_iterator->second, sst_iterator.get_tranc_id()};
@@ -124,6 +126,7 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(const std::strin
       }
     }
   }
+  std::print("end\n");
   return std::nullopt;
 }
 
@@ -327,7 +330,7 @@ uint64_t LSM_Engine::flush() {
   std::vector<uint64_t> flushed_tranc_ids;
   auto                  sst_path = get_sst_path(new_sst_id, 0);
   memtable->frozen_cur_table();
-  auto                  res      = memtable->flushtodisk();
+  auto res = memtable->flushtodisk();
   for (auto i = res->begin(); i != res->end(); ++i) {
     auto kv       = i.getValue();
     auto tranc_id = i.get_tranc_id();
@@ -365,12 +368,6 @@ Level_Iterator LSM_Engine::end() {
 
 void LSM_Engine::full_compact(size_t src_level) {
   // 将 src_level 的 sst 全体压缩到 src_level + 1
-
-  // 递归地判断下一级 level 是否需要 full compact
-  if (level_sst_ids[src_level + 1].size() >= Global_::LSM_SST_LEVEL_RATIO) {
-    full_compact(src_level + 1);
-  }
-
   // 获取源level和目标level的 sst_id
   auto                                  old_level_id_x = level_sst_ids[src_level];
   auto                                  old_level_id_y = level_sst_ids[src_level + 1];
@@ -404,6 +401,10 @@ void LSM_Engine::full_compact(size_t src_level) {
   }
   // 此处没必要reverse了
   std::sort(level_sst_ids[src_level + 1].begin(), level_sst_ids[src_level + 1].end());
+  // 递归地判断下一级 level 是否需要 full compact
+  if (level_sst_ids[src_level + 1].size() >= Global_::LSM_SST_LEVEL_RATIO) {
+    full_compact(src_level + 1);
+  }
 }
 
 std::vector<std::shared_ptr<Sstable>> LSM_Engine::full_l0_l1_compact(std::vector<size_t>& l0_ids,
@@ -435,7 +436,6 @@ std::vector<std::shared_ptr<Sstable>> LSM_Engine::full_l0_l1_compact(std::vector
 std::vector<std::shared_ptr<Sstable>> LSM_Engine::full_common_compact(std::vector<size_t>& lx_ids,
                                                                       std::vector<size_t>& ly_ids,
                                                                       size_t level_y) {
-  // TODO 需要补全已完成事务的滤除
   std::vector<std::shared_ptr<Sstable>> lx_iters;
   std::vector<std::shared_ptr<Sstable>> ly_iters;
 
@@ -497,8 +497,8 @@ void LSM_Engine::set_tran_manager(std::shared_ptr<TranManager> tran_manager_) {
 
 LSM::LSM(std::string path)
     : engine(std::make_shared<LSM_Engine>(path)),
-      tran_manager_(std::make_shared<TranManager>(path)){
- tran_manager_->set_engine(engine);
+      tran_manager_(std::make_shared<TranManager>(path)) {
+  tran_manager_->set_engine(engine);
   engine->set_tran_manager(tran_manager_);
   auto check_recover_res = tran_manager_->check_recover();
   for (auto& [tranc_id, records] : check_recover_res) {

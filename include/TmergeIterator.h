@@ -8,9 +8,8 @@ class TwoMergeIterator : public BaseIterator {
   friend bool operator==(const TwoMergeIterator& a, const TwoMergeIterator& b);
 
  private:
-  std::shared_ptr<BaseIterator>      it_a;
-  std::shared_ptr<BaseIterator>      it_b;
-  bool                               choose_a = false;
+  std::shared_ptr<BaseIterator>      begin_;
+  std::shared_ptr<BaseIterator>      end_;
   mutable std::shared_ptr<valuetype> current;  // 用于存储当前元素
   uint64_t                           max_tranc_id_      = 0;
   bool                               keep_all_versions_ = false;
@@ -19,12 +18,9 @@ class TwoMergeIterator : public BaseIterator {
 
  public:
   TwoMergeIterator();
-  TwoMergeIterator(std::shared_ptr<BaseIterator> it_a, std::shared_ptr<BaseIterator> it_b,
-                   uint64_t max_tranc_id, bool keep_all_versions = false);
-  bool choose_it_a();
-  // 跳过当前不可见事务的id (如果开启了事务功能)
+  TwoMergeIterator(std::shared_ptr<BaseIterator> begin_, std::shared_ptr<BaseIterator> end_,
+                   uint64_t max_tranc_id);
   void                  skip_by_tranc_id();
-  void                  skip_it_b();
   auto                  operator<=>(const TwoMergeIterator& other) const;
   virtual BaseIterator& operator++() override;
   virtual valuetype     operator*() const override;

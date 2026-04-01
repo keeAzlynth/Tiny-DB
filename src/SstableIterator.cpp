@@ -3,6 +3,7 @@
 #include "../include/Sstable.h"
 #include "../include/SstableIterator.h"
 #include <optional>
+#include <print>
 #include <string>
 #include <tuple>
 
@@ -89,12 +90,12 @@ void SstIterator::seek(const std::string& key, bool is_prefix) {
   m_block_idx = find_result.value();
 
   auto block = m_sst->read_block(m_block_idx);
-
   m_block_it = std::make_shared<BlockIterator>(block, key, max_tranc_id_, is_prefix);
   if (m_block_it->is_end()) {
     set_end();
     return;
   }
+  update_current();
 }
 std::string SstIterator::key() const {
   if (!m_block_it) {
@@ -157,7 +158,7 @@ bool SstIterator::exists_key_prefix(std::string key) const {
 }
 
 bool SstIterator::valid() const {
-  return m_block_it && !m_block_it->is_end() && m_block_idx < m_sst->num_blocks();
+  return m_block_it && !m_block_it->is_end();
 }
 
 auto SstIterator::operator<=>(const SstIterator& rhs) const -> std::strong_ordering {
@@ -192,7 +193,10 @@ IteratorType SstIterator::type() const {
 }
 
 BlockIterator::con_pointer SstIterator::operator->() const {
-  return &(*cached_value);
+  if (cached_value.has_value()) {
+    return &(*cached_value);
+  }
+  return nullptr;
 }
 size_t SstIterator::get_block_idx() const {
   return m_block_idx;
@@ -222,5 +226,4 @@ void SstIterator::update_current() const {
   if (valid()) {
     cached_value = **m_block_it;
   }
-  spdlog::info("SstIterator::update_current() invalid");
 }

@@ -15,11 +15,9 @@ class ConcactIterator : public BaseIterator {
   size_t      cur_idx;  // 不是真实的sst_id, 而是在需要连接的sst数组中的索引
   std::vector<std::shared_ptr<Sstable>> ssts;
   uint64_t                              max_tranc_id_;
-  bool                                  keep_all_versions_ = false;
 
  public:
-  ConcactIterator(std::vector<std::shared_ptr<Sstable>> ssts, uint64_t tranc_id,
-                  bool keep_all_versions = false);
+  ConcactIterator(std::vector<std::shared_ptr<Sstable>> ssts, uint64_t tranc_id);
 
   std::string           key();
   std::string           value();

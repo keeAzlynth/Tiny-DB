@@ -116,7 +116,7 @@ class Skiplist {
   int                              max_level;      // 最大层级
   int                              current_level;  // 当前层级
   std::atomic_size_t               size_bytes;     // 内存占用，达到限制flush到disk
-  std::atomic_int                  nodecount;  // 节点数量
+  std::atomic_int                  nodecount;      // 节点数量
   std::random_device               rd;             // 随机数生成器
   static thread_local std::mt19937 gen;            // 随机数引擎
   std::uniform_real_distribution<> dis;            // 随机数分布

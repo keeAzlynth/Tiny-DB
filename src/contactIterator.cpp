@@ -10,14 +10,9 @@ bool operator==(const ConcactIterator& lhs, const ConcactIterator& rhs) noexcept
   return lhs.cur_iter == rhs.cur_iter;
 }
 
-ConcactIterator::ConcactIterator(std::vector<std::shared_ptr<Sstable>> ssts, uint64_t tranc_id,
-                                 bool keep_all_versions)
-    : ssts(ssts),
-      cur_iter(nullptr, tranc_id),
-      cur_idx(0),
-      max_tranc_id_(tranc_id),
-      keep_all_versions_(keep_all_versions) {
-  if (!this->ssts.empty()) {
+ConcactIterator::ConcactIterator(std::vector<std::shared_ptr<Sstable>> ssts, uint64_t tranc_id)
+    : ssts(ssts), cur_iter(nullptr, tranc_id), cur_idx(0), max_tranc_id_(tranc_id) {
+  if (!ssts.empty()) {
     cur_iter = ssts[0]->begin(max_tranc_id_);
   }
 }
@@ -34,7 +29,7 @@ auto ConcactIterator::operator<=>(const ConcactIterator& other) const {
 BaseIterator& ConcactIterator::operator++() {
   ++cur_iter;
 
-  if (cur_iter.isEnd() || !cur_iter.valid()) {
+  if (!cur_iter.valid()) {
     cur_idx++;
     if (cur_idx < ssts.size()) {
       cur_iter = ssts[cur_idx]->begin(max_tranc_id_);
@@ -54,18 +49,15 @@ IteratorType ConcactIterator::type() const {
 }
 
 uint64_t ConcactIterator::get_tranc_id() const {
-  if (keep_all_versions_) {
-    return cur_iter.get_tranc_id();
-  }
-  return max_tranc_id_;
+  return cur_iter.get_tranc_id();
 }
 
 bool ConcactIterator::isEnd() const {
-  return cur_iter.isEnd() || !cur_iter.valid();
+  return cur_iter.isEnd();
 }
 
 bool ConcactIterator::valid() const {
-  return !cur_iter.isEnd() && cur_iter.valid();
+  return cur_iter.valid();
 }
 
 std::string ConcactIterator::key() {

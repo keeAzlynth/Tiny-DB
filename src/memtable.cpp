@@ -133,8 +133,10 @@ bool MemTableIterator::top_value_legal() const {
   }
 }
 
-MemTable::MemTable():current_table(std::move(std::make_unique<Skiplist>())),fixed_bytes(0),cur_status(Global_::SkiplistStatus::kNormal) {
-}
+MemTable::MemTable()
+    : current_table(std::move(std::make_unique<Skiplist>())),
+      fixed_bytes(0),
+      cur_status(Global_::SkiplistStatus::kNormal) {}
 
 bool MemTableIterator::valid() const {
   return !queue_.empty();
@@ -256,6 +258,7 @@ bool MemTable::IsFull() {
 std::unique_ptr<Skiplist> MemTable::flushtodisk() {
   std::unique_lock<std::shared_mutex> lock(fix_lock_);
   auto                                temp = std::move(fixed_tables.front());
+  fixed_tables.pop_front();
   fixed_bytes -= temp->get_size();
   return temp;
 }

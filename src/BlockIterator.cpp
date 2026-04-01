@@ -3,6 +3,7 @@
 #include "../include/Block.h"
 #include <optional>
 #include <string>
+#include <print>
 #include <utility>
 
 BlockIterator::BlockIterator() : block(nullptr), current_index(0), tranc_id_(0) {}
@@ -46,7 +47,7 @@ BlockIterator::BlockIterator(std::shared_ptr<Block> block_, size_t index, uint64
 
 bool BlockIterator::is_end() {
   if (block) {
-    return current_index == block->Offset_.size();
+    return current_index >= block->Offset_.size();
   }
   return true;
 }
@@ -54,8 +55,7 @@ BlockIterator::con_pointer BlockIterator::operator->() {
   if (cached_value.has_value()) {
     return &(*cached_value);
   }
-  update_current();
-  return &(*cached_value);
+  return nullptr;
 }
 BlockIterator& BlockIterator::operator++() {
   if (block) {
