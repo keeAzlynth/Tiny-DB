@@ -91,6 +91,10 @@ class LSM {
   std::optional<std::string>                                      get(const std::string& key);
   std::vector<std::pair<std::string, std::optional<std::string>>> get_batch(
       const std::vector<std::string>& keys);
+  std::vector<std::pair<std::string, std::string>>            range(const std::string& start_key,
+                                                                    const std::string& end_key);
+  std::vector<std::tuple<std::string, std::string, uint64_t>> get_prefix_range(
+      const std::string& key);
 
   void put(const std::string& key, const std::string& value);
   void put_batch(const std::vector<std::pair<std::string, std::string>>& kvs);

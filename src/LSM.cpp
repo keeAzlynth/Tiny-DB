@@ -128,7 +128,6 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(const std::strin
 
 std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> LSM_Engine::get_batch(
     const std::vector<std::string>& keys, uint64_t tranc_id_) {
-  
   // 1. 先从 memtable 中批量查找
   auto memtable_results = memtable->get_batch(keys, tranc_id_);
 
@@ -159,7 +158,7 @@ std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> LSM_E
       if (v.has_value() && v.value().empty()) {  // 仍未找到
         auto res = sst->get_Iterator(k, tranc_id);
         if (res.valid()) {
-          auto val_str  = res->second;
+          auto val_str   = res->second;
           auto val_tranc = res.get_tranc_id();
           if (val_str.empty()) {
             v        = std::nullopt;
@@ -188,7 +187,8 @@ std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> LSM_E
   // 3. 对每一层（L1 到 cur_max_level）
   for (size_t level = 1; level <= cur_max_level && !un_search_L0.empty(); ++level) {
     const auto& sst_ids = level_sst_ids[level];
-    if (sst_ids.empty()) continue;
+    if (sst_ids.empty())
+      continue;
 
     // 为每个待查找的键，二分找出它可能所在的 SST
     std::vector<std::pair<size_t, size_t>> key_to_sst_idx;
@@ -209,7 +209,8 @@ std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> LSM_E
           right = mid;
         }
       }
-      if (left == 0) continue;
+      if (left == 0)
+        continue;
       size_t      idx = left - 1;
       const auto& sst = ssts[sst_ids[idx]];
       if (key <= sst->get_last_key()) {

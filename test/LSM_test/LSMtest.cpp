@@ -504,7 +504,7 @@ TEST_F(LSMTest, GetBatch_AfterCompaction_CorrectResults) {
 
   auto results = lsm->get_batch(query_keys);
 
-  size_t found_count = 0;
+  size_t found_count     = 0;
   size_t not_found_count = 0;
 
   for (const auto& [key, val] : results) {
@@ -648,6 +648,211 @@ TEST_F(LSMTest, EmptyValues_CorrectlyHandled) {
   for (int i = 0; i < N; ++i) {
     auto val = lsm->get(std::format("empty_key_{:03d}", i));
     ASSERT_FALSE(val.has_value());
+  }
+}
+
+TEST_F(LSMTest, ConcurrentInsert_WithCompaction_ReadCorrect) {
+  const int NUM_THREADS     = 8;
+  const int KEYS_PER_THREAD = 500;
+
+  std::atomic<int>         success_count{0};
+  std::vector<std::thread> writers;
+
+  // 并发写入
+  for (int t = 0; t < NUM_THREADS; ++t) {
+    writers.emplace_back([&, t]() {
+      for (int i = 0; i < KEYS_PER_THREAD; ++i) {
+        std::string key = std::format("concurrent_t{:02d}_k{:04d}", t, i);
+        std::string val = std::format("val_t{:02d}_i{:04d}", t, i);
+        lsm->put(key, val);
+        success_count.fetch_add(1, std::memory_order_relaxed);
+
+        // 每隔一段时间 flush，触发 compaction
+        if (i % 100 == 0) {
+          lsm->flush_all();
+        }
+      }
+    });
+  }
+
+  // 并发读取（写入进行中）
+  std::atomic<bool> stop_reader{false};
+  std::thread       reader([&]() {
+    while (!stop_reader.load(std::memory_order_relaxed)) {
+      for (int t = 0; t < NUM_THREADS; ++t) {
+        for (int i = 0; i < KEYS_PER_THREAD; i += 50) {
+          std::string key = std::format("concurrent_t{:02d}_k{:04d}", t, i);
+          auto        val = lsm->get(key);
+          // 读到的值如果存在，必须正确
+          if (val.has_value()) {
+            std::string expected = std::format("val_t{:02d}_i{:04d}", t, i);
+            EXPECT_EQ(val.value(), expected) << "Corrupted value for key: " << key;
+          }
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  });
+
+  for (auto& w : writers) w.join();
+  stop_reader.store(true);
+  reader.join();
+
+  lsm->flush_all();
+
+  // 写入完成后，全量验证
+  int found = 0, not_found = 0;
+  for (int t = 0; t < NUM_THREADS; ++t) {
+    for (int i = 0; i < KEYS_PER_THREAD; ++i) {
+      std::string key      = std::format("concurrent_t{:02d}_k{:04d}", t, i);
+      std::string expected = std::format("val_t{:02d}_i{:04d}", t, i);
+      auto        val      = lsm->get(key);
+      if (val.has_value()) {
+        EXPECT_EQ(val.value(), expected) << "Wrong value for key: " << key;
+        found++;
+      } else {
+        not_found++;
+        ADD_FAILURE() << "Key not found after concurrent insert: " << key;
+      }
+    }
+  }
+
+  EXPECT_EQ(found, NUM_THREADS * KEYS_PER_THREAD) << "All keys should be found";
+  EXPECT_EQ(not_found, 0) << "No key should be missing";
+  EXPECT_EQ(success_count.load(), NUM_THREADS * KEYS_PER_THREAD);
+}
+
+TEST_F(LSMTest, PrefixScan_Mixed_WithCompaction) {
+  const int    N = 200;
+  std::mt19937 rng(42);
+
+  // === 第一批写入，制造第一个版本 ===
+  for (int i = 0; i < N; ++i) {
+    lsm->put(std::format("alpha_{:04d}", i), std::format("val_alpha_v1_{:04d}", i));
+    lsm->put(std::format("beta_{:04d}", i), std::format("val_beta_v1_{:04d}", i));
+    lsm->put(std::format("gamma_{:04d}", i), std::format("val_gamma_v1_{:04d}", i));
+  }
+  // 混入随机噪声数据
+  for (int i = 0; i < 300; ++i) {
+    lsm->put(std::format("noise_{:06d}", rng() % 100000), std::format("noise_val_{}", i));
+  }
+  lsm->flush_all();  // → 触发第一次 compaction
+
+  // === 第二批：部分 key 覆盖写入，制造第二个版本 ===
+  for (int i = 0; i < N; i += 2) {  // 偶数 key 覆盖
+    lsm->put(std::format("alpha_{:04d}", i), std::format("val_alpha_v2_{:04d}", i));
+    lsm->put(std::format("beta_{:04d}", i), std::format("val_beta_v2_{:04d}", i));
+  }
+  // 再混入随机噪声
+  for (int i = 0; i < 300; ++i) {
+    lsm->put(std::format("noise_{:06d}", rng() % 100000), std::format("noise_val_{}", i));
+  }
+  lsm->flush_all();  // → 触发第二次 compaction
+
+  // === 第三批：删除部分 gamma，再写入新 gamma ===
+  for (int i = 0; i < 50; ++i) {
+    lsm->remove(std::format("gamma_{:04d}", i));  // 删除 gamma 0~49
+  }
+  for (int i = N; i < N + 50; ++i) {  // 新增 gamma 200~249
+    lsm->put(std::format("gamma_{:04d}", i), std::format("val_gamma_v1_{:04d}", i));
+  }
+  // 再混入随机噪声
+  for (int i = 0; i < 300; ++i) {
+    lsm->put(std::format("noise_{:06d}", rng() % 100000), std::format("noise_val_{}", i));
+  }
+  lsm->flush_all();  // → 触发第三次 compaction
+
+  // ===================== 验证 alpha_ =====================
+  {
+    auto results = lsm->get_prefix_range("alpha_");
+    ASSERT_EQ(results.size(), N) << "alpha_ should have exactly N keys";
+
+    std::string prev = "";
+    for (auto& [k, v, tranc_id] : results) {
+      EXPECT_TRUE(k.starts_with("alpha_")) << "Unexpected key in alpha scan: " << k;
+      EXPECT_GT(k, prev) << "alpha_ keys not in order at: " << k;
+      prev = k;
+
+      int idx = std::stoi(k.substr(k.size() - 4));
+      // 偶数 key 应该是 v2，奇数 key 应该是 v1
+      if (idx % 2 == 0) {
+        EXPECT_EQ(v, std::format("val_alpha_v2_{:04d}", idx)) << "Wrong version for: " << k;
+      } else {
+        EXPECT_EQ(v, std::format("val_alpha_v1_{:04d}", idx)) << "Wrong version for: " << k;
+      }
+    }
+  }
+
+  // ===================== 验证 beta_ =====================
+  {
+    auto results = lsm->get_prefix_range("beta_");
+    ASSERT_EQ(results.size(), N) << "beta_ should have exactly N keys";
+
+    std::string prev = "";
+    for (auto& [k, v, tranc_id] : results) {
+      EXPECT_TRUE(k.starts_with("beta_")) << "Unexpected key in beta scan: " << k;
+      EXPECT_GT(k, prev) << "beta_ keys not in order at: " << k;
+      prev = k;
+
+      int idx = std::stoi(k.substr(k.size() - 4));
+      if (idx % 2 == 0) {
+        EXPECT_EQ(v, std::format("val_beta_v2_{:04d}", idx)) << "Wrong version for: " << k;
+      } else {
+        EXPECT_EQ(v, std::format("val_beta_v1_{:04d}", idx)) << "Wrong version for: " << k;
+      }
+    }
+  }
+
+  // ===================== 验证 gamma_ =====================
+  {
+    auto results = lsm->get_prefix_range("gamma_");
+    // gamma 0~49 被删除，50~199 保留，200~249 新增，共 200 条
+    ASSERT_EQ(results.size(), 200) << "gamma_ should have 200 keys (50 deleted, 50 added)";
+
+    std::string   prev = "";
+    std::set<int> seen_idx;
+    for (auto& [k, v, tranc_id] : results) {
+      EXPECT_TRUE(k.starts_with("gamma_")) << "Unexpected key in gamma scan: " << k;
+      EXPECT_GT(k, prev) << "gamma_ keys not in order at: " << k;
+      prev = k;
+
+      int idx = std::stoi(k.substr(k.size() - 4));
+      EXPECT_GE(idx, 50) << "Deleted gamma key appeared: " << k;
+      EXPECT_LT(idx, 250) << "Out of range gamma key: " << k;
+      EXPECT_EQ(v, std::format("val_gamma_v1_{:04d}", idx)) << "Wrong value for: " << k;
+      seen_idx.insert(idx);
+    }
+
+    // 确认 0~49 不存在，50~249 全部存在
+    for (int i = 0; i < 50; ++i) {
+      EXPECT_EQ(seen_idx.count(i), 0) << "Deleted gamma_" << i << " should not appear";
+    }
+    for (int i = 50; i < 250; ++i) {
+      EXPECT_EQ(seen_idx.count(i), 1) << "gamma_" << i << " should be present";
+    }
+  }
+
+  // ===================== 验证噪声不污染前缀 =====================
+  {
+    auto alpha_results = lsm->get_prefix_range("alpha_");
+    auto beta_results  = lsm->get_prefix_range("beta_");
+    auto gamma_results = lsm->get_prefix_range("gamma_");
+
+    for (auto& [k, v, tranc_id] : alpha_results) {
+      EXPECT_FALSE(k.starts_with("noise_")) << "Noise key leaked into alpha scan";
+    }
+    for (auto& [k, v, tranc_id] : beta_results) {
+      EXPECT_FALSE(k.starts_with("noise_")) << "Noise key leaked into beta scan";
+    }
+    for (auto& [k, v, tranc_id] : gamma_results) {
+      EXPECT_FALSE(k.starts_with("noise_")) << "Noise key leaked into gamma scan";
+    }
+  }
+
+  // ===================== 验证不存在的前缀 =====================
+  {
+    auto results = lsm->get_prefix_range("nonexist_");
+    EXPECT_TRUE(results.empty()) << "Nonexistent prefix should return empty";
   }
 }
 
