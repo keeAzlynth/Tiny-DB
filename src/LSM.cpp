@@ -1,6 +1,10 @@
 #include "../include/LSM.h"
 #include <algorithm>
+#include <array>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 #include "../include/SstableIterator.h"
 #include "../include/LeveIterator.h"
 #include "../include/contactIterator.h"
@@ -124,76 +128,132 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(const std::strin
 
 std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> LSM_Engine::get_batch(
     const std::vector<std::string>& keys, uint64_t tranc_id_) {
+  
   // 1. 先从 memtable 中批量查找
-  auto results = memtable->get_batch(keys, tranc_id_);
+  auto memtable_results = memtable->get_batch(keys, tranc_id_);
 
-  // 2. 如果所有键都在memtable 中找到，直接返回
+  std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> results;
   std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> un_search;
-  for (auto& [key, value, tranc_id] : results) {
+
+  for (auto& [key, value, tranc_id] : memtable_results) {
     if (!value.has_value()) {
-      // 需要插入
-      un_search.emplace_back(std::make_tuple(key, std::string(), tranc_id));
+      // memtable 未找到 → 加入待查列表，不加入 results
+      un_search.emplace_back(key, std::string(), tranc_id_);
     } else if (value.value().empty()) {
-      value = std::nullopt;  // 空值表示被删除
+      // 空字符串 = 删除标记
+      results.emplace_back(key, std::nullopt, tranc_id);
+    } else {
+      results.emplace_back(key, value, tranc_id);
     }
   }
 
   if (un_search.empty()) {
-    return results;  // 不需要查sst
+    return results;
   }
 
   // 2. 从 L0 层 SST 文件中批量查找未命中的键
-  std::shared_lock<std::shared_mutex> rlock(ssts_mtx);  // 加读锁
-  for (auto& [key, value, tranc_id_index] : un_search) {
-    for (auto& sst_id : level_sst_ids[0]) {
-      auto& sst          = ssts[sst_id];
-      auto  sst_iterator = sst->get_Iterator(key, tranc_id_);
-      if (sst_iterator.valid()) {
-        auto index = std::make_pair(sst_iterator->second, sst_iterator.get_tranc_id());
-        if (index.first.empty()) {
-          value          = std::nullopt;  // 空值表示被删除
-          tranc_id_index = index.second;
-          break;  // 停止继续查找
-        } else {
-          value          = index.first;
-          tranc_id_index = index.second;
-          break;  // 停止继续查找
+  std::shared_lock<std::shared_mutex> rlock(ssts_mtx);
+  for (auto& sst_id : level_sst_ids[0]) {
+    auto& sst = ssts[sst_id];
+    for (auto& [k, v, tranc_id] : un_search) {
+      if (v.has_value() && v.value().empty()) {  // 仍未找到
+        auto res = sst->get_Iterator(k, tranc_id);
+        if (res.valid()) {
+          auto val_str  = res->second;
+          auto val_tranc = res.get_tranc_id();
+          if (val_str.empty()) {
+            v        = std::nullopt;
+            tranc_id = val_tranc;
+          } else {
+            v        = val_str;
+            tranc_id = val_tranc;
+          }
         }
       }
     }
   }
-  // 3. 从其他层级 SST 文件中批量查找未命中的键
-  for (size_t level = 1; level <= cur_max_level; level++) {
-    std::deque<size_t> l_sst_ids = level_sst_ids[level];
 
-    for (auto& [key, value, tranc_id_index] : un_search) {
-      if (!value.has_value())  // 已找到，被删除了
-      {
-        continue;
+  // 将 L0 已找到的移入 results，未找到的进入 un_search_L0
+  std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> un_search_L0;
+  for (auto& item : un_search) {
+    auto& v = std::get<1>(item);
+    if (v.has_value() && v.value().empty()) {
+      // L0 也未找到
+      un_search_L0.emplace_back(std::get<0>(item), std::string(), tranc_id_);
+    } else {
+      results.emplace_back(item);
+    }
+  }
+
+  // 3. 对每一层（L1 到 cur_max_level）
+  for (size_t level = 1; level <= cur_max_level && !un_search_L0.empty(); ++level) {
+    const auto& sst_ids = level_sst_ids[level];
+    if (sst_ids.empty()) continue;
+
+    // 为每个待查找的键，二分找出它可能所在的 SST
+    std::vector<std::pair<size_t, size_t>> key_to_sst_idx;
+    key_to_sst_idx.reserve(un_search_L0.size());
+
+    for (size_t i = 0; i < un_search_L0.size(); ++i) {
+      const auto& key = std::get<0>(un_search_L0[i]);
+      if (!std::get<1>(un_search_L0[i]).has_value() ||
+          !std::get<1>(un_search_L0[i]).value().empty()) {
+        continue;  // 已在上一层找到，跳过
       }
-
-      // 二分查找确定键可能所在的 SST 文件
-      size_t left  = 0;
-      size_t right = l_sst_ids.size();
+      size_t left = 0, right = sst_ids.size();
       while (left < right) {
         size_t mid = left + (right - left) / 2;
-        auto&  sst = ssts[l_sst_ids[mid]];
-
-        if (sst->get_first_key() <= key && key <= sst->get_last_key()) {
-          // 如果键在当前 SST 文件范围内，则在 SST 中查找
-          auto sst_iterator = sst->get_Iterator(key, tranc_id_index);
-          if (sst_iterator.valid()) {
-            auto index     = std::make_pair(sst_iterator->second, sst_iterator.get_tranc_id());
-            value          = index.first;
-            tranc_id_index = index.second;
-            break;  // 停止继续查找
-          }
-        } else if (sst->get_last_key() < key) {
+        if (ssts[sst_ids[mid]]->get_first_key() <= key) {
           left = mid + 1;
         } else {
           right = mid;
         }
       }
+      if (left == 0) continue;
+      size_t      idx = left - 1;
+      const auto& sst = ssts[sst_ids[idx]];
+      if (key <= sst->get_last_key()) {
+        key_to_sst_idx.emplace_back(i, idx);
+      }
+    }
+
+    // 按 SST 分组
+    std::sort(key_to_sst_idx.begin(), key_to_sst_idx.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // 遍历每个 SST，批量查找属于它的键
+    for (size_t g = 0; g < key_to_sst_idx.size();) {
+      size_t sst_idx = key_to_sst_idx[g].second;
+      size_t sst_id  = sst_ids[sst_idx];
+      auto&  sst     = ssts[sst_id];
+
+      std::vector<size_t> batch_keys_idx;
+      while (g < key_to_sst_idx.size() && key_to_sst_idx[g].second == sst_idx) {
+        batch_keys_idx.push_back(key_to_sst_idx[g].first);
+        ++g;
+      }
+
+      for (size_t ki : batch_keys_idx) {
+        auto& [key, val, tranc] = un_search_L0[ki];
+        if (val.has_value() && val.value().empty()) {  // 仍未找到
+          auto iter = sst->get_Iterator(key, tranc);
+          if (iter.valid()) {
+            auto val_str = iter->second;
+            tranc        = iter.get_tranc_id();
+            val          = val_str.empty() ? std::nullopt : std::optional<std::string>(val_str);
+          }
+        }
+      }
+    }
+  }
+
+  // 4. 将 un_search_L0 的结果合并进 results
+  for (auto& [key, val, tranc] : un_search_L0) {
+    if (val.has_value() && val.value().empty()) {
+      // 所有层都未找到 → key 不存在
+      results.emplace_back(key, std::nullopt, tranc);
+    } else {
+      results.emplace_back(key, val, tranc);
     }
   }
 

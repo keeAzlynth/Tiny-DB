@@ -480,8 +480,7 @@ TEST_F(LSMTest, BatchOperations_WithCompaction) {
     EXPECT_EQ(*result, v);
   }
 }
-/*
-// get_batch 在压缩后仍返回正确结果//
+
 TEST_F(LSMTest, GetBatch_AfterCompaction_CorrectResults) {
   const int N = 1000;
 
@@ -521,7 +520,7 @@ TEST_F(LSMTest, GetBatch_AfterCompaction_CorrectResults) {
   EXPECT_EQ(found_count, N / 2) << "Should find half the keys";
   EXPECT_EQ(not_found_count, 2) << "Should not find 2 nonexistent keys";
 }
-*/
+
 // ─────────────────────────────────────────────
 //  9. clear() 语义
 // ─────────────────────────────────────────────
