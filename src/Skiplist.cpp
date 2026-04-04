@@ -55,6 +55,12 @@ std::pair<std::string, std::string> SkiplistIterator::getValue() const {
   }
   return {std::string(), std::string()};
 }
+std::tuple<std::string, std::string, uint64_t> SkiplistIterator::get_value_tranc_id() const {
+  if (current) {
+    return {current->key_, current->value_, current->transaction_id};
+  }
+  return {std::string(), std::string(), 0};
+}
 
 bool Skiplist::Insert(const std::string& key, const std::string& value,
                       const uint64_t transaction_id) {
@@ -272,6 +278,15 @@ SkiplistIterator Skiplist::prefix_serach_end(const std::string& key) {
     }
   }
   return SkiplistIterator(current->forward[0]);
+}
+std::vector<std::tuple<std::string, std::string, uint64_t>> Skiplist::get_prefix_range(
+    const std::string& prefix, uint64_t tranc_id) {
+  auto                                                        end = prefix_serach_end(prefix);
+  std::vector<std::tuple<std::string, std::string, uint64_t>> result;
+  for (auto begin = prefix_serach_begin(prefix); begin != end; ++begin) {
+    result.emplace_back(begin.get_value_tranc_id());
+  }
+  return result;
 }
 void Skiplist::set_status(Global_::SkiplistStatus status) {
   cur_status = status;

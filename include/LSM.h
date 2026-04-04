@@ -33,6 +33,8 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
   LSM_Engine(std::string path, size_t block_cache_capacity = Global_::Block_CACHE_capacity,
              size_t block_cache_k = Global_::Block_CACHE_K);
   ~LSM_Engine() = default;
+  std::vector<std::tuple<std::string, std::string, uint64_t>> get_prefix_range(
+      const std::string& prefix, uint64_t tranc_id);
 
   std::optional<std::pair<std::string, uint64_t>> get(const std::string& key,
                                                       uint64_t           tranc_id = 0);

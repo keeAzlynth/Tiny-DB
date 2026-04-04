@@ -3,6 +3,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include "../include/SstableIterator.h"
@@ -74,6 +75,83 @@ LSM_Engine::LSM_Engine(std::string path, size_t block_cache_capacity, size_t blo
   }
 }
 
+// Engine 层：在所有层中收集前缀匹配的键值对，合并去重后返回
+std::vector<std::tuple<std::string, std::string, uint64_t>> LSM_Engine::get_prefix_range(
+    const std::string& prefix, uint64_t tranc_id_) {
+  // 用 map 保存结果：key -> (value, tranc_id)，高层覆盖低层
+  std::unordered_map<std::string, std::pair<std::string, uint64_t>> merged;
+
+  // 1. 从 memtable 中查找前缀匹配
+  auto memtable_results = memtable->get_prefix_range(prefix, tranc_id_);
+  for (auto& [k, v, tranc_id] : memtable_results) {
+    merged[k] = {v, tranc_id};
+  }
+
+  std::shared_lock<std::shared_mutex> rlock(ssts_mtx);
+
+  // 2. 从 L0 层查找（L0 SST 之间有重叠，需全部扫描）
+  for (auto& sst_id : level_sst_ids[0]) {
+    auto& sst     = ssts[sst_id];
+    auto  results = sst->get_prefix_range(prefix, tranc_id_);
+    for (auto& [key, value, tranc_id] : results) {
+      // 只有 map 中没有，或者 tranc_id 更新时才覆盖
+      auto it = merged.find(key);
+      if (it == merged.end() || it->second.second < tranc_id) {
+        merged[key] = {value, tranc_id};
+      }
+    }
+  }
+
+  // 3. 从 L1 到 cur_max_level 查找
+  for (size_t level = 1; level <= cur_max_level; ++level) {
+    const auto& sst_ids = level_sst_ids[level];
+    if (sst_ids.empty())
+      continue;
+
+    // 二分定位第一个可能包含 prefix 的 SST
+    size_t left = 0, right = sst_ids.size();
+    while (left < right) {
+      size_t mid = left + (right - left) / 2;
+      if (ssts[sst_ids[mid]]->get_first_key() <= prefix) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    // 从 left-1 开始，向后扫描所有 first_key <= prefix+\xff 的 SST
+    size_t start = (left == 0) ? 0 : left - 1;
+
+    for (size_t idx = start; idx < sst_ids.size(); ++idx) {
+      auto& sst = ssts[sst_ids[idx]];
+      // 若该 SST 的 first_key 已经超出前缀范围，停止
+      if (sst->get_first_key().substr(0, prefix.size()) > prefix)
+        break;
+
+      auto results = sst->get_prefix_range(prefix, tranc_id_);
+      for (auto& [key, value, tranc_id] : results) {
+        auto it = merged.find(key);
+        if (it == merged.end() || it->second.second < tranc_id) {
+          merged[key] = {value, tranc_id};
+        }
+      }
+    }
+  }
+
+  // 4. 构造结果，过滤掉删除标记（value 为空字符串）
+  std::vector<std::tuple<std::string, std::string, uint64_t>> results;
+  for (auto& [key, val_tranc] : merged) {
+    auto& [value, tranc_id] = val_tranc;
+    if (!value.empty()) {  // 空字符串 = 删除标记，跳过
+      results.emplace_back(key, value, tranc_id);
+    }
+  }
+
+  // 按 key 排序保证有序输出
+  std::sort(results.begin(), results.end(),
+            [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+
+  return results;
+}
 std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(const std::string& key,
                                                                 uint64_t           tranc_id) {
   // 1. 先查找 memtable
@@ -753,6 +831,15 @@ std::vector<std::pair<std::string, std::optional<std::string>>> LSM::get_batch(
   return results;
 }
 
+std::vector<std::tuple<std::string, std::string, uint64_t>> LSM::get_prefix_range(
+    const std::string& prefix) {
+  // 1. 获取事务ID（与 get_batch 保持一致）
+  auto tranc_id = tran_manager_->getNextTransactionId();
+
+  // 2. 调用 engine 的前缀查询接口
+  auto raw_results = engine->get_prefix_range(prefix, tranc_id);
+  return raw_results;
+}
 void LSM::put(const std::string& key, const std::string& value) {
   auto tranc_id = tran_manager_->getNextTransactionId();
   engine->put(key, value, tranc_id);

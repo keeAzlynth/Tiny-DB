@@ -141,6 +141,10 @@ MemTable::MemTable()
 bool MemTableIterator::valid() const {
   return !queue_.empty();
 }
+std::vector<std::tuple<std::string, std::string, uint64_t>> MemTable::get_prefix_range(
+    const std::string& prefix, uint64_t tranc_id) {
+  return current_table->get_prefix_range(prefix, tranc_id);
+}
 void MemTable::clear() {
   auto temp     = std::move(current_table);
   current_table = std::move(std::make_unique<Skiplist>());

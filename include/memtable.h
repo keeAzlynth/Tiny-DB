@@ -57,6 +57,8 @@ class MemTable {
   MemTable(const MemTable& other)            = delete;
   MemTable& operator=(const MemTable& other) = delete;
   ~MemTable()                                = default;
+  std::vector<std::tuple<std::string, std::string, uint64_t>> get_prefix_range(
+      const std::string& prefix, uint64_t tranc_id);
   void clear();
   void put(const std::string& key, const std::string& value, const uint64_t transaction_id = 0);
   void put_mutex(const std::string& key, const std::string& value,

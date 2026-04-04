@@ -9,6 +9,7 @@
 #include <random>
 #include <shared_mutex>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include "../include/Global.h"
@@ -41,13 +42,14 @@ class SkiplistIterator : public BaseIterator {
   BaseIterator& operator++() override;
   auto          operator<=>(const SkiplistIterator& other) const;
 
-  valuetype                           operator*() const override;
-  SkiplistIterator                    operator+=(int offset) const;
-  bool                                valid() const override;
-  bool                                isEnd() const override;
-  IteratorType                        type() const override;
-  uint64_t                            get_tranc_id() const override;
-  std::pair<std::string, std::string> getValue() const;
+  valuetype                                      operator*() const override;
+  SkiplistIterator                               operator+=(int offset) const;
+  bool                                           valid() const override;
+  bool                                           isEnd() const override;
+  IteratorType                                   type() const override;
+  uint64_t                                       get_tranc_id() const override;
+  std::pair<std::string, std::string>            getValue() const;
+  std::tuple<std::string, std::string, uint64_t> get_value_tranc_id() const;
 
  private:
   Node* current;
@@ -106,6 +108,8 @@ class Skiplist {
   SkiplistIterator begin();
   SkiplistIterator prefix_serach_begin(const std::string& key);
   SkiplistIterator prefix_serach_end(const std::string& key);
+  std::vector<std::tuple<std::string, std::string, uint64_t>> get_prefix_range(
+      const std::string& prefix, uint64_t tranc_id);
 
   void                    set_status(Global_::SkiplistStatus status);
   Global_::SkiplistStatus get_status() const;
