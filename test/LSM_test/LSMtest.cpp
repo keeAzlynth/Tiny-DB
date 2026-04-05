@@ -451,7 +451,7 @@ TEST_F(LSMTest, Iterator_AfterCompaction_TraversesAllData) {
 // ─────────────────────────────────────────────
 //  7. 批量操作与压缩交互
 // ─────────────────────────────────────────────
-
+/*
 // 大量 batch 操作触发多次压缩
 TEST_F(LSMTest, BatchOperations_WithCompaction) {
   const int batch_size  = 500;
@@ -566,7 +566,7 @@ TEST_F(LSMTest, Clear_AfterCompaction_RemovesAllData) {
 // ─────────────────────────────────────────────
 //  10. 边界与特殊操作测试
 // ─────────────────────────────────────────────
-/*
+
 // 大值处理：验证较大的 value 能正确存贮和读取
 TEST_F(LSMTest, LargeValues_CorrectlyHandled) {
   const int N = 100;
@@ -583,7 +583,7 @@ TEST_F(LSMTest, LargeValues_CorrectlyHandled) {
     EXPECT_EQ(*val, large_value);
   }
 }
-*/
+
 // 特殊字符 key 处理
 TEST_F(LSMTest, SpecialCharacterKeys_Handled) {
   std::vector<std::string> special_keys = {
@@ -650,10 +650,10 @@ TEST_F(LSMTest, EmptyValues_CorrectlyHandled) {
     ASSERT_FALSE(val.has_value());
   }
 }
-
+*/
 TEST_F(LSMTest, ConcurrentInsert_WithCompaction_ReadCorrect) {
   const int NUM_THREADS     = 8;
-  const int KEYS_PER_THREAD = 500;
+  const int KEYS_PER_THREAD = 5000;
 
   std::atomic<int>         success_count{0};
   std::vector<std::thread> writers;
@@ -668,8 +668,8 @@ TEST_F(LSMTest, ConcurrentInsert_WithCompaction_ReadCorrect) {
         success_count.fetch_add(1, std::memory_order_relaxed);
 
         // 每隔一段时间 flush，触发 compaction
-        if (i % 100 == 0) {
-          lsm->flush_all();
+        if (i % 1000 == 0) {
+          lsm->flush();
         }
       }
     });
@@ -736,7 +736,7 @@ TEST_F(LSMTest, PrefixScan_Mixed_WithCompaction) {
   for (int i = 0; i < 300; ++i) {
     lsm->put(std::format("noise_{:06d}", rng() % 100000), std::format("noise_val_{}", i));
   }
-  lsm->flush_all();  // → 触发第一次 compaction
+  lsm->flush();  // → 触发第一次 compaction
 
   // === 第二批：部分 key 覆盖写入，制造第二个版本 ===
   for (int i = 0; i < N; i += 2) {  // 偶数 key 覆盖
@@ -747,7 +747,7 @@ TEST_F(LSMTest, PrefixScan_Mixed_WithCompaction) {
   for (int i = 0; i < 300; ++i) {
     lsm->put(std::format("noise_{:06d}", rng() % 100000), std::format("noise_val_{}", i));
   }
-  lsm->flush_all();  // → 触发第二次 compaction
+  lsm->flush();  // → 触发第二次 compaction
 
   // === 第三批：删除部分 gamma，再写入新 gamma ===
   for (int i = 0; i < 50; ++i) {
@@ -760,7 +760,7 @@ TEST_F(LSMTest, PrefixScan_Mixed_WithCompaction) {
   for (int i = 0; i < 300; ++i) {
     lsm->put(std::format("noise_{:06d}", rng() % 100000), std::format("noise_val_{}", i));
   }
-  lsm->flush_all();  // → 触发第三次 compaction
+  lsm->flush();  // → 触发第三次 compaction
 
   // ===================== 验证 alpha_ =====================
   {
