@@ -369,63 +369,51 @@ size_t Sstbuild::estimated_size() const {
 
 std::shared_ptr<Sstable> Sstbuild::build(std::shared_ptr<BlockCache> block_cache,
                                          const std::string& path, size_t sst_id) {
-  // 完成最后一个block
   if (!block_.is_empty()) {
     finish_block();
   }
 
-  // 如果没有数据，返回空指针
   if (block_metas.empty()) {
-    spdlog::info(
-        "Sstbuild::build(std::shared_ptr<BlockCache> block_cache,const std::string& path, size_t "
-        "sst_id) Cannot build empty SST");
+    spdlog::info("Sstbuild::build: Cannot build empty SST");
     return nullptr;
   }
 
-  // 编码元数据块
-  std::vector<uint8_t> meta_block = BlockMeta::encode_meta_to_slice(block_metas);
+  // ── 1. 预算各段大小，一次性分配 ──────────────────────────────
+  std::vector<uint8_t> meta_block  = BlockMeta::encode_meta_to_slice(block_metas);
+  const size_t         bf_size     = (bloom_filter != nullptr) ? bloom_filter->encode_size() : 0;
+  const size_t         footer_size = sizeof(uint32_t) * 2 + sizeof(uint64_t) * 2;
 
-  // 计算元数据块的偏移量
-  uint32_t meta_offset = data.size();
+  const uint32_t meta_offset  = static_cast<uint32_t>(data.size());
+  const uint32_t bloom_offset = static_cast<uint32_t>(meta_offset + meta_block.size());
 
-  // 构建完整的文件内容
-  // 1. 已有的数据块
+  const size_t total_size = data.size() + meta_block.size() + bf_size + footer_size;
+
   std::vector<uint8_t> file_content = std::move(data);
+  file_content.resize(total_size);
 
-  // file_content=data+ meta_block;//原始序列化数据+元数据块
-  //  2. 添加元数据块
-  file_content.insert(file_content.end(), meta_block.begin(), meta_block.end());
+  uint8_t* base = file_content.data();
+  uint8_t* ptr  = base + meta_offset;
 
-  // 3. 编码布隆过滤器
-  uint32_t bloom_offset = file_content.size();
+  // ── 3. 写 meta block ─────────────────────────────────────────
+  std::memcpy(ptr, meta_block.data(), meta_block.size());
+  ptr += meta_block.size();
+
+  // ── 4. 写 bloom filter（原地编码，零拷贝）────────────────────
   if (bloom_filter != nullptr) {
-    auto bf_data = bloom_filter->encode();
-    file_content.insert(file_content.end(), bf_data.begin(), bf_data.end());
+    bloom_filter->encode_into(ptr);
+    ptr += bf_size;
   }
 
-  auto extra_len = sizeof(uint32_t) * 2 + sizeof(uint64_t) * 2;
-  file_content.resize(file_content.size() + extra_len);
-  // sizeof(uint32_t) * 2  表示: 元数据块的偏移量, 布隆过滤器偏移量,
-  // sizeof(uint64_t) * 2  表示: 最小事务id,, 最大事务id
+  // ── 5. 写 footer ──────────────────────────────────────────────
+  std::memcpy(ptr, &meta_offset,  sizeof(uint32_t)); ptr += sizeof(uint32_t);
+  std::memcpy(ptr, &bloom_offset, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+  std::memcpy(ptr, &min_tranc_id, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+  std::memcpy(ptr, &max_tranc_id, sizeof(uint64_t));
 
-  // 4. 添加元数据块偏移量
-  memcpy(file_content.data() + file_content.size() - extra_len, &meta_offset, sizeof(uint32_t));
-
-  // 5. 添加布隆过滤器偏移量
-  memcpy(file_content.data() + file_content.size() - extra_len + sizeof(uint32_t), &bloom_offset,
-         sizeof(uint32_t));
-
-  // 6. 添加最大和最小的事务id
-  memcpy(file_content.data() + file_content.size() - sizeof(uint64_t) * 2, &min_tranc_id,
-         sizeof(uint64_t));
-  memcpy(file_content.data() + file_content.size() - sizeof(uint64_t), &max_tranc_id,
-         sizeof(uint64_t));
-
+  // ── 6. 写文件 ────────────────────────────────────────────────
   FileObj file = FileObj::create_and_write(path, file_content);
 
-  // 返回SST对象
-  auto res = std::make_shared<Sstable>();
-
+  auto res               = std::make_shared<Sstable>();
   res->sst_id            = sst_id;
   res->file_obj          = std::move(file);
   res->first_key         = block_metas.front().first_key_;

@@ -1,6 +1,7 @@
 #include "../include/LSM.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -16,7 +17,7 @@
 
 LSM_Engine::LSM_Engine(std::string path, size_t block_cache_capacity, size_t block_cache_k)
     : data_dir(path),
-      memtable(std::make_shared<MemTable>()),
+      memtable(std::make_shared<MemTable>()),level_size{0},
       block_cache(std::make_shared<BlockCache>(block_cache_capacity, block_cache_k)) {
   if (!std::filesystem::exists(path)) {
     std::filesystem::create_directory(path);
@@ -61,6 +62,7 @@ LSM_Engine::LSM_Engine(std::string path, size_t block_cache_capacity, size_t blo
       auto        sst      = Sstable::open(sst_id, FileObj::open(sst_path, false), block_cache);
       ssts[sst_id]         = sst;
       level_sst_ids[level].push_back(sst_id);
+      level_size[level] += sst->get_sst_size();
     }
 
     next_sst_id++;  // 现有的最大 sst_id 自增后才是下一个分配的 sst_id
@@ -339,6 +341,9 @@ std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> LSM_E
 
   return results;
 }
+uint64_t LSM_Engine::bytes_to_mb(size_t bytes) const{
+      return bytes/(1024ULL*1024ULL);
+    }
 std::optional<std::pair<std::string, uint64_t>> LSM_Engine::sst_get_(const std::string& key,
                                                                      uint64_t           tranc_id) {
   // 1. l0 sst中查询
@@ -439,16 +444,9 @@ void LSM_Engine::clear() {
 }
 
 uint64_t LSM_Engine::flush() {
+  // 1. 判断 memtable 是否为空
   if (memtable->get_total_size() == 0) {
     return 0;
-  }
-
-  std::unique_lock<std::shared_mutex> lock(ssts_mtx);  // 写锁
-
-  // 1. 先判断 l0 sst 是否数量超限需要concat到 l1
-  if (level_sst_ids.find(0) != level_sst_ids.end() &&
-      level_sst_ids[0].size() >= Global_::LSM_SST_LEVEL_RATIO) {
-    full_compact(0);
   }
 
   // 2. 创建新的 SST ID
@@ -461,16 +459,21 @@ uint64_t LSM_Engine::flush() {
   // 4. 将 memtable 中最旧的表写入 SST
   std::vector<uint64_t> flushed_tranc_ids;
   auto                  sst_path = get_sst_path(new_sst_id, 0);
-  if (memtable->get_cur_size() > 0) {
-    memtable->frozen_cur_table();
+
+  std::unique_lock<std::shared_mutex> lock(ssts_mtx);  // 写锁
+
+  if (memtable->get_fixed_size()==0) {
+  memtable->frozen_cur_table();
   }
   auto res = memtable->flushtodisk();
+  lock.unlock();  // 先释放锁，构建 SST 可能比较慢，期间不需要锁
   for (auto i = res->begin(); i != res->end(); ++i) {
     auto kv       = i.getValue();
     auto tranc_id = i.get_tranc_id();
     builder.add(kv.first, kv.second, tranc_id);
   }
   auto new_sst = builder.build(block_cache, sst_path, new_sst_id);
+  lock.lock();  // 重新加锁，更新内存索引
   if (!new_sst) {
     next_sst_id--;
     return 0;
@@ -484,6 +487,11 @@ uint64_t LSM_Engine::flush() {
   // 7. 添加到 flushed 集合
   for (auto& id : flushed_tranc_ids) {
     tran_manager.lock()->add_flushed_tranc_id(id);
+  }
+  //判断 l0 sst 是否数量超限需要concat到 l1
+  if (level_sst_ids.find(0) != level_sst_ids.end() &&
+      level_sst_ids[0].size() >= Global_::LSM_SST_LEVEL_RATIO) {
+    full_compact(0);
   }
   return new_sst->get_tranc_id_range().second;
 }
@@ -544,10 +552,12 @@ void LSM_Engine::full_compact(size_t src_level) {
   }
   // 完成 compact 后移除旧的sst记录
   for (auto& old_sst_id : old_level_id_x) {
+    level_size[src_level] -= ssts[old_sst_id]->get_sst_size();
     ssts[old_sst_id]->del_sst();
     ssts.erase(old_sst_id);
   }
   for (auto& old_sst_id : old_level_id_y) {
+    level_size[src_level + 1] -= ssts[old_sst_id]->get_sst_size();
     ssts[old_sst_id]->del_sst();
     ssts.erase(old_sst_id);
   }
@@ -558,13 +568,14 @@ void LSM_Engine::full_compact(size_t src_level) {
 
   // 添加新的sst
   for (auto& new_sst : new_ssts) {
+    level_size[src_level + 1] += new_sst->get_sst_size();
     level_sst_ids[src_level + 1].push_back(new_sst->get_sst_id());
     ssts[new_sst->get_sst_id()] = new_sst;
   }
   // 此处没必要reverse了
   std::sort(level_sst_ids[src_level + 1].begin(), level_sst_ids[src_level + 1].end());
   // 递归地判断下一级 level 是否需要 full compact
-  if (level_sst_ids[src_level + 1].size() >= Global_::LSM_SST_LEVEL_RATIO) {
+  if (level_size[src_level+1]/1024/1024 >= 10*std::pow(10,src_level)) {
     full_compact(src_level + 1);
   }
 }
@@ -735,7 +746,6 @@ std::vector<std::shared_ptr<Sstable>> LSM_Engine::gen_sst_from_iter(BaseIterator
       std::string sst_path = get_sst_path(sst_id, target_level);
       auto        new_sst  = new_sst_builder.build(block_cache, sst_path, sst_id);
       new_ssts.push_back(new_sst);
-
       new_sst_builder = Sstbuild(Global_::Block_SIZE, true);
     }
   }

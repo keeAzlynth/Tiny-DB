@@ -5,7 +5,9 @@
 #include "storage/Sstable.h"
 #include "iterator/TmergeIterator.h"
 #include "transaction/transaction.h"
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <memory>
@@ -23,6 +25,7 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
   std::shared_ptr<MemTable>                            memtable;
   std::map<size_t, std::deque<size_t>>                 level_sst_ids;
   std::unordered_map<size_t, std::shared_ptr<Sstable>> ssts;
+  std::array<std::size_t,Global_::MAX_LEVEL>                    level_size;//从第一层开始统计
   std::shared_mutex                                    ssts_mtx;
   std::shared_ptr<BlockCache>                          block_cache;
   std::weak_ptr<TranManager>                           tran_manager;
@@ -40,7 +43,7 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
                                                       uint64_t           tranc_id = 0);
   std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> get_batch(
       const std::vector<std::string>& keys, uint64_t tranc_id = 0);
-
+    uint64_t bytes_to_mb(size_t bytes) const;
   std::optional<std::pair<std::string, uint64_t>> sst_get_(const std::string& key,
                                                            uint64_t           tranc_id = 0);
 
