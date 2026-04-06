@@ -59,26 +59,26 @@ class MemTable {
   MemTable& operator=(const MemTable& other) = delete;
   ~MemTable()                                = default;
   std::vector<std::tuple<std::string, std::string, uint64_t>> get_prefix_range(
-      const std::string& prefix, uint64_t tranc_id);
+      std::string_view prefix, uint64_t tranc_id);
   void clear();
   void put(const std::string& key, const std::string& value, const uint64_t transaction_id = 0);
   void put_mutex(const std::string& key, const std::string& value,
                  const uint64_t transaction_id = 0);
   void put_batch(const std::vector<std::pair<std::string, std::string>>& key_value_pairs,
                  const uint64_t                                          transaction_id = 0);
-  std::optional<std::pair<std::string, uint64_t>> get(const std::string& key,
+  std::optional<std::pair<std::string, uint64_t>> get(std::string_view key,
                                                       const uint64_t     transaction_id = 0);
 
-  SkiplistIterator cur_get(const std::string& key, const uint64_t transaction_id = 0);
-  SkiplistIterator fix_get(const std::string& key, const uint64_t transaction_id = 0);
+  SkiplistIterator cur_get(std::string_view key, const uint64_t transaction_id = 0);
+  SkiplistIterator fix_get(std::string_view key, const uint64_t transaction_id = 0);
   std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> get_batch(
       const std::vector<std::string>& key_s, const uint64_t transaction_id = 0);
   size_t get_node_num() const;
   size_t get_cur_size();
   size_t get_fixed_size();
   size_t get_total_size();
-  void   remove(const std::string& key, const uint64_t transaction_id = 0);
-  void   remove_mutex(const std::string& key, const uint64_t transaction_id = 0);
+  void   remove(std::string_view key, const uint64_t transaction_id = 0);
+  void   remove_mutex(std::string_view key, const uint64_t transaction_id = 0);
   void   remove_batch(const std::vector<std::string>& key_pairs, const uint64_t transaction_id = 0);
   bool   IsFull();
   std::unique_ptr<Skiplist>            flushtodisk();
@@ -87,7 +87,7 @@ class MemTable {
   bool                                 frozen_cur_table(bool force = false);
   MemTableIterator                     begin();
   MemTableIterator                     end();
-  MemTableIterator prefix_serach(const std::string& key, const uint64_t transaction_id = 0);
+  MemTableIterator prefix_serach(std::string_view key, const uint64_t transaction_id = 0);
 
  private:
   std::unique_ptr<Skiplist>            current_table;  // 活跃 SkipList
