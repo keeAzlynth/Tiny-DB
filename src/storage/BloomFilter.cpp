@@ -34,10 +34,11 @@ void BloomFilter::add(const std::string& key) {
 }
 
 //  如果key可能存在于布隆过滤器中，返回true；否则返回false
-bool BloomFilter::possibly_contains(const std::string& key) const {
+bool BloomFilter::possibly_contains(std::string_view key) const {
   // 对每个哈希函数计算哈希值，检查对应位置的位是否都为true
+  std::string key_str(key);
   for (size_t i = 0; i < num_hashes_; ++i) {
-    auto bit_idx = hash(key, i);
+    auto bit_idx = hash(key_str, i);
     if (!bits_[bit_idx]) {
       return false;
     }

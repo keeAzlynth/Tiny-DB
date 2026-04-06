@@ -16,7 +16,7 @@ class BloomFilter {
   void add(const std::string& key);
 
   // 如果key可能存在于布隆过滤器中，返回true；否则返回false
-  bool possibly_contains(const std::string& key) const;
+  bool possibly_contains(std::string_view key) const;
 
   // 清空布隆过滤器
   void clear();
