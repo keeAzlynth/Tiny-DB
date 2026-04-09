@@ -1,0 +1,71 @@
+LSM Code Formatting - Clang-Format Conversion Log
+========================================================
+
+Total Files Modified: 25
+Formatting Tool: clang-format (based on .clang-format config)
+Date: 2026-04-09
+
+COMMIT BREAKDOWN:
+================
+
+[COMMIT 1] Format: Core library headers (core, storage, transaction)
+  Files:
+  - include/LSM.h
+  - include/core/Global.h
+  - include/core/Skiplist.h
+  - include/core/memtable.h
+  - include/storage/Block.h
+  - include/storage/BloomFilter.h
+  - include/storage/Sstable.h
+  - include/storage/wal.h
+  - include/transaction/transaction.h
+  Changes: Aligned spacing, fixed indentation, standardized comment formatting
+  Impact: No logic changes, pure formatting
+
+[COMMIT 2] Format: Core library implementations
+  Files:
+  - src/LSM.cpp
+  - src/core/Skiplist.cpp
+  - src/core/memtable.cpp
+  - src/storage/Block.cpp
+  - src/storage/BloomFilter.cpp
+  - src/storage/Sstable.cpp
+  - src/storage/wal.cpp
+  Changes: Unified code style, consistent indentation and spacing
+  Impact: No logic changes, pure formatting
+
+[COMMIT 3] Format: Iterator components
+  Files:
+  - src/iterator/BlockIterator.cpp
+  Changes: Standardized formatting for iterator implementation
+  Impact: No logic changes, pure formatting
+
+[COMMIT 4] Format: Main program and tools
+  Files:
+  - main.cpp
+  - tools/dump_blocks.cpp
+  - test/LSMTestOptions.cmake
+  Changes: Consistent spacing and alignment
+  Impact: No logic changes, pure formatting
+
+[COMMIT 5] Format: Test files
+  Files:
+  - test/LSM_test/LSMtest.cpp
+  - test/Skiplist_test/skiplist_test.cpp
+  - test/Sstable_test/sstable_test.cpp
+  - test/Temp_Skiplist_test/t_skip.cpp
+  Changes: Applied clang-format to all test files
+  Impact: No logic changes, test behavior preserved
+
+FORMATTING RULES APPLIED:
+========================
+Based on .clang-format configuration:
+- Code indentation standardized
+- Spacing around operators and keywords normalized
+- Line length and wrapping adjusted
+- Comment formatting improved
+- Consistent brace and parenthesis placement
+- Function parameter alignment fixed
+- Member variable alignment improved
+
+STATUS: All 25 files successfully formatted and staged for commit
