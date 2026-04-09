@@ -183,7 +183,7 @@ TEST_F(SkiplistTest, PrecisionPerformanceTest) {
 
 TEST_F(SkiplistTest, MemoryAnalysisTest1) {
   constexpr std::array<size_t, 3> TEST_SIZES = {100, 1000, 10000};
-  std::vector<double> memory_efficiency;
+  std::vector<double>             memory_efficiency;
 
   for (size_t size : TEST_SIZES) {
     std::print("\n=== 测试数据量: {} 条记录 ===\n", size);
@@ -196,13 +196,14 @@ TEST_F(SkiplistTest, MemoryAnalysisTest1) {
     // 插入数据
     auto insert_start = std::chrono::high_resolution_clock::now();
     for (size_t i = 0; i < size; ++i) {
-      std::string key   = std::format("test_key_{:08}", i);
-      std::string value = std::format("test_value_{:08}", i);
-      bool success = test_list->Insert(key, value);
-      if (!success) std::print("警告: 插入失败 at i={}\n", i);
+      std::string key     = std::format("test_key_{:08}", i);
+      std::string value   = std::format("test_value_{:08}", i);
+      bool        success = test_list->Insert(key, value);
+      if (!success)
+        std::print("警告: 插入失败 at i={}\n", i);
     }
-    auto insert_end  = std::chrono::high_resolution_clock::now();
-    auto insert_time  =
+    auto insert_end = std::chrono::high_resolution_clock::now();
+    auto insert_time =
         std::chrono::duration_cast<std::chrono::milliseconds>(insert_end - insert_start);
 
     size_t final_memory = test_list->get_size();
@@ -261,8 +262,7 @@ TEST_F(SkiplistTest, MemoryAnalysisTest1) {
     std::print("\n=== 内存使用趋势分析 ===\n");
     for (size_t i = 1; i < memory_efficiency.size(); ++i) {
       double growth = memory_efficiency[i] / memory_efficiency[i - 1];
-      std::print("从 {} 到 {}: 效率比率 = {:.3f}\n",
-                TEST_SIZES[i-1], TEST_SIZES[i], growth);
+      std::print("从 {} 到 {}: 效率比率 = {:.3f}\n", TEST_SIZES[i - 1], TEST_SIZES[i], growth);
       EXPECT_GT(growth, 0.9);
       EXPECT_LT(growth, 1.1);
     }
@@ -275,14 +275,14 @@ TEST_F(SkiplistTest, MemoryAnalysisTest1) {
     constexpr size_t      OPERATIONS = 1000;
     std::set<std::string> inserted_keys;
 
-    std::mt19937 rng(std::random_device{}());
+    std::mt19937                       rng(std::random_device{}());
     std::uniform_int_distribution<int> op_dist(0, 2);
     std::uniform_int_distribution<int> key_dist(0, 999);
 
     for (size_t i = 0; i < OPERATIONS; ++i) {
-      int  op      = op_dist(rng);
-      int  key_num = key_dist(rng);
-      std::string key = std::format("rand_key_{:04}", key_num);
+      int         op      = op_dist(rng);
+      int         key_num = key_dist(rng);
+      std::string key     = std::format("rand_key_{:04}", key_num);
 
       switch (op) {
         case 0:  // 插入
@@ -307,8 +307,7 @@ TEST_F(SkiplistTest, MemoryAnalysisTest1) {
     EXPECT_EQ(random_list.getnodecount(), inserted_keys.size());
 
     for (const auto& k : inserted_keys) {
-      EXPECT_TRUE(random_list.Contain(k).has_value())
-          << std::format("键 {} 应存在", k);
+      EXPECT_TRUE(random_list.Contain(k).has_value()) << std::format("键 {} 应存在", k);
     }
   }
 }

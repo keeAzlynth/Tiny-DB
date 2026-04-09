@@ -20,9 +20,8 @@ class SstableTest : public ::testing::Test {
     // 初始化 BlockCache
     block_cache = std::make_shared<BlockCache>(4096, 2);
     memtable    = std::make_unique<MemTable>();
-    if (std::filesystem::exists(tmp_path1)&& std::filesystem::exists(tmp_path2)) {
-    }
-    else {
+    if (std::filesystem::exists(tmp_path1) && std::filesystem::exists(tmp_path2)) {
+    } else {
       std::filesystem::create_directory(tmp_path1);
       std::filesystem::create_directory(tmp_path2);
     }
@@ -64,7 +63,7 @@ class SstableTest : public ::testing::Test {
   std::shared_ptr<Sstable> build_sstable(
       const std::vector<std::tuple<std::string, std::string, uint64_t>>& data,
       const std::string& path, size_t block_size = 4096) {
-if (std::filesystem::exists(path)) {
+    if (std::filesystem::exists(path)) {
       std::filesystem::remove(path);
     }
     Sstbuild builder(block_size, true);
