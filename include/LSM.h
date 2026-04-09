@@ -27,25 +27,25 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
   std::shared_ptr<MemTable>                            memtable;
   std::map<size_t, std::deque<size_t>>                 level_sst_ids;
   std::unordered_map<size_t, std::shared_ptr<Sstable>> ssts;
-  std::array<std::size_t,Global_::MAX_LEVEL>                    level_size;//从第一层开始统计
+  std::array<std::size_t, Global_::MAX_LEVEL>          level_size;  // 从第一层开始统计
   std::shared_mutex                                    ssts_mtx;
   std::shared_ptr<BlockCache>                          block_cache;
   std::weak_ptr<TranManager>                           tran_manager;
-  std::atomic_size_t                                               next_sst_id   = 0;
+  std::atomic_size_t                                   next_sst_id   = 0;
   size_t                                               cur_max_level = 0;
 
  public:
   LSM_Engine(std::string path, size_t block_cache_capacity = Global_::Block_CACHE_capacity,
              size_t block_cache_k = Global_::Block_CACHE_K);
-  ~LSM_Engine() = default;
+  ~LSM_Engine();
   std::vector<std::tuple<std::string, std::string, uint64_t>> get_prefix_range(
       const std::string& prefix, uint64_t tranc_id);
-    std::vector<std::pair<std::string,std::string>> print_level_range(size_t level);
-  std::optional<std::pair<std::string, uint64_t>> get(const std::string& key,
-                                                      uint64_t           tranc_id = 0);
+  std::vector<std::pair<std::string, std::string>>     print_level_range(size_t level);
+  std::optional<std::pair<std::string_view, uint64_t>> get(std::string_view key,
+                                                           uint64_t         tranc_id = 0);
   std::vector<std::tuple<std::string, std::optional<std::string>, uint64_t>> get_batch(
       const std::vector<std::string>& keys, uint64_t tranc_id = 0);
-    uint64_t bytes_to_mb(size_t bytes) const;
+  uint64_t                                        bytes_to_mb(size_t bytes) const;
   std::optional<std::pair<std::string, uint64_t>> sst_get_(const std::string& key,
                                                            uint64_t           tranc_id = 0);
 
@@ -71,6 +71,11 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
   void                     set_tran_manager(std::shared_ptr<TranManager> tran_manager_);
 
  private:
+  std::thread                           compaction_thread_;
+  std::mutex                            compaction_mutex_;
+  std::condition_variable               compaction_cv_;
+  std::atomic<bool>                     stop_compaction_{false};
+  void                                  compaction_worker();
   bool                                  exit_valid_sst_iter(std::vector<SstIterator>& sst_iters);
   std::pair<size_t, size_t>             find_the_small_kv(std::vector<SstIterator>& sst_iters);
   void                                  full_compact(size_t src_level);
@@ -94,9 +99,9 @@ class LSM {
  public:
   LSM(std::string path);
   ~LSM();
-   void print_level_range(size_t level);
+  void print_level_range(size_t level);
 
-  std::optional<std::string>                                      get(const std::string& key);
+  std::optional<std::string_view>                                 get(std::string_view key);
   std::vector<std::pair<std::string, std::optional<std::string>>> get_batch(
       const std::vector<std::string>& keys);
   std::vector<std::pair<std::string, std::string>>            range(const std::string& start_key,

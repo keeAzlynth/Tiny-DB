@@ -2,6 +2,7 @@
 
 #include "../storage/file.h"
 #include "../storage/wal.h"
+#include "../core/record.h"
 #include <atomic>
 #include <map>
 #include <set>

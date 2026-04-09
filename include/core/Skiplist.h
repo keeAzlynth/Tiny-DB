@@ -17,8 +17,8 @@
 
 class SkiplistIterator;
 struct LookupResult {
-    std::string_view value;
-    uint64_t transaction_id;
+  std::string_view value;
+  uint64_t         transaction_id;
 };
 class Node {
  public:
@@ -31,11 +31,11 @@ class Node {
       : key_(std::move(key)), value_(std::move(value)), next_{}, transaction_id(transaction_ids) {
     forward.fill(nullptr);
   }
-  Node(Node&&) noexcept = default;
+  Node(Node&&) noexcept            = default;
   Node& operator=(Node&&) noexcept = default;
-  Node(const Node&) = delete; 
-  Node& operator=(const Node&) = delete;
-  auto operator<=>(const Node& other) const;
+  Node(const Node&)                = delete;
+  Node& operator=(const Node&)     = delete;
+  auto  operator<=>(const Node& other) const;
 };
 
 bool operator==(const SkiplistIterator& lhs, const SkiplistIterator& rhs) noexcept;
@@ -56,7 +56,7 @@ class SkiplistIterator : public BaseIterator {
   bool                                           isEnd() const override;
   IteratorType                                   type() const override;
   uint64_t                                       get_tranc_id() const override;
-  valuetype            getValue() const;
+  valuetype                                      getValue() const;
   std::tuple<std::string, std::string, uint64_t> get_value_tranc_id() const;
 
  private:
@@ -64,10 +64,12 @@ class SkiplistIterator : public BaseIterator {
 };
 
 inline int cmp(std::string_view a, std::string_view b) {
-    auto res = a <=> b;
-    if (res < 0) return -1;
-    if (res > 0) return 1;
-    return 0;
+  auto res = a <=> b;
+  if (res < 0)
+    return -1;
+  if (res > 0)
+    return 1;
+  return 0;
 }
 
 class Skiplist {
@@ -101,8 +103,8 @@ class Skiplist {
 
   bool Delete(std::string_view key);
 
-  std::optional<std::string> Contain(std::string_view key, const uint64_t transaction_id = 0);
-  std::optional<LookupResult>      Get(std::string_view key, const uint64_t transaction_id = 0);
+  std::optional<std::string>  Contain(std::string_view key, const uint64_t transaction_id = 0);
+  std::optional<LookupResult> Get(std::string_view key, const uint64_t transaction_id = 0);
   std::vector<std::pair<std::string, std::string>> flush();
   Node*            get_node(std::string_view key, const uint64_t transaction_id = 0);
   std::size_t      get_size();

@@ -67,7 +67,7 @@ class MemTable {
   void put_batch(const std::vector<std::pair<std::string, std::string>>& key_value_pairs,
                  const uint64_t                                          transaction_id = 0);
   std::optional<std::pair<std::string, uint64_t>> get(std::string_view key,
-                                                      const uint64_t     transaction_id = 0);
+                                                      const uint64_t   transaction_id = 0);
 
   SkiplistIterator cur_get(std::string_view key, const uint64_t transaction_id = 0);
   SkiplistIterator fix_get(std::string_view key, const uint64_t transaction_id = 0);

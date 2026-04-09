@@ -19,11 +19,11 @@ class BloomFilter {
   bool possibly_contains(std::string_view key) const;
 
   // 清空布隆过滤器
-  void clear();
-size_t encode_size() const;
-size_t encode_into(uint8_t* dst) const;
-  void encode_bits_fast(uint8_t* ptr, size_t num_bytes) const;
-  void decode_bits_fast(const uint8_t* ptr, size_t num_bytes);
+  void   clear();
+  size_t encode_size() const;
+  size_t encode_into(uint8_t* dst) const;
+  void   encode_bits_fast(uint8_t* ptr, size_t num_bytes) const;
+  void   decode_bits_fast(const uint8_t* ptr, size_t num_bytes);
 
   std::vector<uint8_t> encode() const;
   static BloomFilter   decode(const std::vector<uint8_t>& data);
