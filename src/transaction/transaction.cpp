@@ -417,11 +417,11 @@ std::string TranManager::get_tranc_id_file_path() {
   }
   return data_dir_ + "/tranc_id";
 }
-
+/*
 std::map<uint64_t, std::vector<Record>> TranManager::check_recover() {
   spdlog::info("TranManager--check_recover(): Starting recovery from WAL");
 
-  std::map<uint64_t, std::vector<Record>> wal_records =
+auto wal_records =
       WAL::recover(data_dir_, *flushedTrancIds_.begin());
 
   spdlog::info("TranManager--check_recover(): Recovered {} transactions", wal_records.size());
@@ -445,3 +445,4 @@ bool TranManager::write_to_wal(const std::vector<Record>& records) {
 
   return true;
 }
+*/

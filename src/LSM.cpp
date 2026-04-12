@@ -4,6 +4,7 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <memory>
 #include <optional>
 #include <print>
 #include <string>
@@ -148,7 +149,14 @@ LSM_Engine::~LSM_Engine() {
   }
   compaction_cv_.notify_one();
   if (compaction_thread_.joinable())
+  if (compaction_thread_.joinable())
     compaction_thread_.join();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Read paths  (unchanged from original)
+// ════════════════════════════════════════════════════════════════════════════
+
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -171,7 +179,10 @@ std::vector<std::tuple<std::string, std::string, uint64_t>> LSM_Engine::get_pref
     for (auto& [key, value, tranc_id] : results) {
       auto it = merged.find(key);
       if (it == merged.end() || it->second.second < tranc_id)
+      if (it == merged.end() || it->second.second < tranc_id)
         merged[key] = {value, tranc_id};
+    }
+  }
     }
   }
 
@@ -189,6 +200,7 @@ std::vector<std::tuple<std::string, std::string, uint64_t>> LSM_Engine::get_pref
       for (auto& [key, value, tranc_id] : results) {
         auto it = merged.find(key);
         if (it == merged.end() || it->second.second < tranc_id)
+        if (it == merged.end() || it->second.second < tranc_id)
           merged[key] = {value, tranc_id};
       }
     }
@@ -198,15 +210,21 @@ std::vector<std::tuple<std::string, std::string, uint64_t>> LSM_Engine::get_pref
   for (auto& [key, val_tranc] : merged) {
     auto& [value, tranc_id] = val_tranc;
     if (!value.empty())
+    if (!value.empty())
       results.emplace_back(key, value, tranc_id);
   }
+  }
   std::ranges::sort(results, [](const auto& a, const auto& b) {
+    if (std::get<0>(a) != std::get<0>(b))
+      return std::get<0>(a) < std::get<0>(b);
+    return std::get<2>(a) > std::get<2>(b);
     if (std::get<0>(a) != std::get<0>(b))
       return std::get<0>(a) < std::get<0>(b);
     return std::get<2>(a) > std::get<2>(b);
   });
   return results;
 }
+
 
 std::vector<std::pair<std::string, std::string>> LSM_Engine::print_level_range(size_t level) {
   std::shared_lock<std::shared_mutex>              lock_(ssts_mtx);
@@ -230,6 +248,8 @@ std::optional<std::pair<std::string, uint64_t>> LSM_Engine::get(std::string_view
     if (mem_res.value().first.empty()) return std::nullopt;
     return std::pair<std::string, uint64_t>{mem_res.value().first, mem_res.value().second};
   }
+
+  std::shared_lock<std::shared_mutex> rlock(ssts_mtx);
 
   std::shared_lock<std::shared_mutex> rlock(ssts_mtx);
 
@@ -266,9 +286,11 @@ LSM_Engine::get_batch(const std::vector<std::string>& keys, uint64_t tranc_id_) 
 
   for (auto& [key, value, tranc_id] : memtable_results) {
     if (!value.has_value())
+    if (!value.has_value())
       un_search.emplace_back(key, std::string(), tranc_id_);
     else if (value.value().empty())
       results.emplace_back(key, std::nullopt, tranc_id);
+    else
     else
       results.emplace_back(key, value, tranc_id);
   }
@@ -276,9 +298,11 @@ LSM_Engine::get_batch(const std::vector<std::string>& keys, uint64_t tranc_id_) 
 
   std::shared_lock<std::shared_mutex> rlock(ssts_mtx);
 
+
   for (auto& sst_id : level_sst_ids[0]) {
     auto& sst = ssts[sst_id];
     for (auto& [k, v, tranc_id] : un_search) {
+      if (v.has_value() && v.value().empty()) {
       if (v.has_value() && v.value().empty()) {
         auto res = sst->get_Iterator(k, tranc_id);
         if (res.valid()) {
@@ -297,6 +321,7 @@ LSM_Engine::get_batch(const std::vector<std::string>& keys, uint64_t tranc_id_) 
     if (v.has_value() && v.value().empty())
       un_search_L0.emplace_back(std::get<0>(item), std::string(), tranc_id_);
     else
+    else
       results.emplace_back(item);
   }
 
@@ -310,6 +335,8 @@ LSM_Engine::get_batch(const std::vector<std::string>& keys, uint64_t tranc_id_) 
     for (size_t i = 0; i < un_search_L0.size(); ++i) {
       const auto& key = std::get<0>(un_search_L0[i]);
       if (!std::get<1>(un_search_L0[i]).has_value() ||
+          !std::get<1>(un_search_L0[i]).value().empty())
+        continue;
           !std::get<1>(un_search_L0[i]).value().empty())
         continue;
       size_t left = 0, right = sst_ids.size();
@@ -371,6 +398,12 @@ uint64_t LSM_Engine::put(const std::string& key, const std::string& value, uint6
   if (auto r = wal->log(WalEntry{key, value, tranc_id}); !r)
     spdlog::error("WAL log failed for key='{}': error {}", key, static_cast<int>(r.error()));
 
+  // WAL write must succeed before the entry is visible in the memtable.
+  // On failure we log the error but do not propagate it upward (matching the
+  // existing void-return contract of LSM::put).
+  if (auto r = wal->log(WalEntry{key, value, tranc_id}); !r)
+    spdlog::error("WAL log failed for key='{}': error {}", key, static_cast<int>(r.error()));
+
   memtable->put_mutex(key, value, tranc_id);
   if (memtable->get_total_size() >= Global_::MAX_MEMTABLE_SIZE_PER_TABLE)
     compaction_cv_.notify_one();
@@ -393,6 +426,7 @@ uint64_t LSM_Engine::put_batch(const std::vector<std::pair<std::string, std::str
     compaction_cv_.notify_one();
   return 0;
 }
+
 
 uint64_t LSM_Engine::remove(const std::string& key, uint64_t tranc_id) {
   // Empty value is the tombstone convention throughout the LSM stack.
@@ -569,6 +603,17 @@ std::pair<size_t, size_t> LSM_Engine::find_the_small_kv(std::vector<SstIterator>
 //       Recovery simply skips missing files with a warning.
 //    3. Update in-memory index and recurse if the target level overflows.
 
+
+// ─── full_compact ──────────────────────────────────────────────────────────
+//
+//  Crash-safety ordering:
+//    1. Write ADD_SST for every new SST to MANIFEST (fsynced).
+//       On crash here, old SSTs still exist and MANIFEST lists both — safe.
+//    2. Delete each old SST file, then write its REMOVE_SST (fsynced).
+//       On crash here, MANIFEST may list an already-deleted SST.
+//       Recovery simply skips missing files with a warning.
+//    3. Update in-memory index and recurse if the target level overflows.
+
 void LSM_Engine::full_compact(size_t src_level) {
   auto old_level_id_x = level_sst_ids[src_level];
   auto old_level_id_y = level_sst_ids[src_level + 1];
@@ -601,7 +646,19 @@ void LSM_Engine::full_compact(size_t src_level) {
     ssts[old_id]->del_sst();
     ssts.erase(old_id);
     manifest_->remove_sst(old_id);
+
+  // ── Step 2: delete old SSTs + write REMOVE_SST for each ──────────────────
+  for (auto old_id : old_level_id_x) {
+    level_size[src_level] -= ssts[old_id]->get_sst_size();
+    ssts[old_id]->del_sst();
+    ssts.erase(old_id);
+    manifest_->remove_sst(old_id);
   }
+  for (auto old_id : old_level_id_y) {
+    level_size[target_level] -= ssts[old_id]->get_sst_size();
+    ssts[old_id]->del_sst();
+    ssts.erase(old_id);
+    manifest_->remove_sst(old_id);
   for (auto old_id : old_level_id_y) {
     level_size[target_level] -= ssts[old_id]->get_sst_size();
     ssts[old_id]->del_sst();
@@ -694,8 +751,11 @@ std::vector<std::shared_ptr<Sstable>> LSM_Engine::full_common_compact(
   auto advance_all_with_key = [&](const std::string& key) {
     for (auto& it : merged)
       while (it.valid() && it.key() == key) ++it;
+    for (auto& it : merged)
+      while (it.valid() && it.key() == key) ++it;
   };
   auto advance_one = [&](size_t idx, const std::string& key) {
+    while (merged[idx].valid() && merged[idx].key() == key) ++merged[idx];
     while (merged[idx].valid() && merged[idx].key() == key) ++merged[idx];
   };
   auto find_best = [&]() -> std::pair<size_t, bool> {
@@ -759,6 +819,7 @@ std::vector<std::shared_ptr<Sstable>> LSM_Engine::gen_sst_from_iter(
   return new_ssts;
 }
 
+
 size_t LSM_Engine::get_sst_size(size_t level) {
   if (level == 0) return Global_::MAX_MEMTABLE_SIZE_PER_TABLE;
   return Global_::MAX_MEMTABLE_SIZE_PER_TABLE *
@@ -770,6 +831,8 @@ std::vector<SstIterator> LSM_Engine::merge_sst_iterator(std::vector<std::size_t>
   if (iter_id0.empty() && iter_id1.empty()) return {};
   std::vector<SstIterator> l0_l1_iters;
   l0_l1_iters.reserve(iter_id0.size() + iter_id1.size());
+  for (auto id : iter_id0) l0_l1_iters.push_back(ssts[id]->begin(0));
+  for (auto id : iter_id1) l0_l1_iters.push_back(ssts[id]->begin(0));
   for (auto id : iter_id0) l0_l1_iters.push_back(ssts[id]->begin(0));
   for (auto id : iter_id1) l0_l1_iters.push_back(ssts[id]->begin(0));
   return l0_l1_iters;
@@ -805,6 +868,7 @@ std::optional<std::string> LSM::get(std::string_view key) {
 std::vector<std::pair<std::string, std::optional<std::string>>> LSM::get_batch(
     const std::vector<std::string>& keys) {
   auto batch_results = engine->get_batch(keys, getNextTransactionId());
+  auto batch_results = engine->get_batch(keys, getNextTransactionId());
   std::vector<std::pair<std::string, std::optional<std::string>>> results;
   for (const auto& [key, value, tr] : batch_results)
     results.emplace_back(key, value);
@@ -822,19 +886,27 @@ std::vector<std::tuple<std::string, std::string, uint64_t>> LSM::get_prefix_rang
   return engine->get_prefix_range(prefix, getNextTransactionId());
 }
 
+  return engine->get_prefix_range(prefix, getNextTransactionId());
+}
+
 void LSM::put(const std::string& key, const std::string& value) {
+  engine->put(key, value, getNextTransactionId());
   engine->put(key, value, getNextTransactionId());
 }
 
 void LSM::put_batch(const std::vector<std::pair<std::string, std::string>>& kvs) {
   engine->put_batch(kvs, getNextTransactionId());
+  engine->put_batch(kvs, getNextTransactionId());
 }
 
+
 void LSM::remove(const std::string& key) {
+  engine->remove(key, getNextTransactionId());
   engine->remove(key, getNextTransactionId());
 }
 
 void LSM::remove_batch(const std::vector<std::string>& keys) {
+  engine->remove_batch(keys, getNextTransactionId());
   engine->remove_batch(keys, getNextTransactionId());
 }
 
