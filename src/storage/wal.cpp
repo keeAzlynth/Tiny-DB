@@ -121,6 +121,45 @@ std::expected<void, WalError> WAL::log(const WalEntry& entry) {
     return log_unordered(entry);
 }
 
+// ─── log_batch ────────────────────────────────────────────────────────────────
+//
+//  Writes every entry in `entries` to the WAL and issues exactly one fsync,
+//  regardless of WAL_WRITE_POLICY.  Holding write_mutex_ for the full batch
+//  provides atomic durability: either all entries are fsynced or the call
+//  returns an error.
+//
+//  Design notes:
+//  • Bypassing pipelining is intentional – a batch is already a "group write"
+//    and grouping groups adds no benefit.
+//  • Concurrent single log() calls in kPipelined mode will queue behind this
+//    batch's write_mutex_ hold, which is correct behaviour.
+//  • On error, entries already written to the kernel buffer are NOT rolled
+//    back.  Callers must treat a WAL write failure as fatal and stop accepting
+//    new writes.
+
+std::expected<void, WalError> WAL::log_batch(std::span<const WalEntry> entries) {
+  if (entries.empty()) return {};
+
+  std::lock_guard lk(write_mutex_);
+
+  for (const auto& e : entries) {
+    if (auto r = write_entry_blocks(e); !r)
+      return r;
+  }
+
+  if (log_file_.size() > file_size_limit_) {
+    // Rolling the file here keeps each WAL segment bounded; the cleaner will
+    // eventually remove segments whose entries are all checkpointed.
+    reset_file();
+    // reset_file() does its own fsync on the old file before rotating.
+    return {};
+  }
+
+  if (!log_file_.sync())
+    return std::unexpected(WalError::kSyncFailed);
+
+  return {};
+}
 // ─── Unordered path ───────────────────────────────────────────────────────────
 // Each caller independently serialises through write_mutex_.
 // No grouping; lock is held only for one entry's write + fsync.

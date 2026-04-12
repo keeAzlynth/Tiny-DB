@@ -211,7 +211,7 @@ std::string Sstable::get_last_key() const {
 bool Sstable::is_block_index_vaild(size_t block_idx) const {
   return block_idx < block_metas.size() ? true : false;
 }
-std::optional<std::pair<std::string_view, uint64_t>> Sstable::KeyExists(std::string_view key,
+std::optional<std::pair<std::string, uint64_t>> Sstable::KeyExists(std::string_view key,
                                                                         uint64_t         tranc_id) {
   if (key < first_key || key > last_key) {
     return std::nullopt;

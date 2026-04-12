@@ -36,7 +36,7 @@ class Sstable : public std::enable_shared_from_this<Sstable> {
   std::string                         get_last_key() const;
   std::tuple<std::string, std::string, uint64_t> getValue() const;
   bool                                           is_block_index_vaild(size_t block_index) const;
-  std::optional<std::pair<std::string_view, uint64_t>> KeyExists(std::string_view key, uint64_t);
+  std::optional<std::pair<std::string, uint64_t>> KeyExists(std::string_view key, uint64_t);
   SstIterator get_Iterator(std::string_view key, uint64_t tranc_id = 0, bool is_prefix = false);
   SstIterator current_Iterator(size_t block_idx, uint64_t tranc_id = 0);
   SstIterator begin(uint64_t tranc_id);
