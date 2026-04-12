@@ -61,12 +61,18 @@ struct WalEntry {
 //                  MemTable in parallel.
 //    kUnordered  – each writer independently holds write_mutex_ for its own
 //                  entry only; no grouping overhead.
+//
+//  log_batch():
+//    Bypasses the pipelining mechanism and holds write_mutex_ for the entire
+//    span of entries, issuing exactly one fsync at the end.  This is the
+//    preferred path for put_batch / remove_batch where all entries share one
+//    transaction-id and must be atomically durable.
 // ─────────────────────────────────────────────────────────────────────────────
 class WAL {
  public:
-  explicit WAL(std::string_view log_dir, uint64_t checkpoint_tranc_id,
-               uint64_t clean_interval_s = Global_::WAL_CLEAN_INTERVAL_S,
-               uint64_t file_size_limit  = Global_::WAL_FILE_LIMIT);
+  WAL(std::string_view log_dir, uint64_t checkpoint_tranc_id,
+      uint64_t clean_interval_s = Global_::WAL_CLEAN_INTERVAL_S,
+      uint64_t file_size_limit  = Global_::WAL_FILE_LIMIT);
   ~WAL();
 
   WAL(const WAL&)            = delete;
@@ -82,6 +88,13 @@ class WAL {
   // Append one entry and block until it is fsync'd to disk.
   // Dispatches to pipelined or unordered path based on WAL_WRITE_POLICY.
   [[nodiscard]] std::expected<void, WalError> log(const WalEntry& entry);
+
+  // Append a batch of entries with a single fsync.
+  // Holds write_mutex_ for the entire batch regardless of WAL_WRITE_POLICY,
+  // giving atomic durability for all entries in one round-trip to disk.
+  // Returns on the first I/O error; entries written before the error are NOT
+  // rolled back (callers should treat WAL write failure as fatal).
+  [[nodiscard]] std::expected<void, WalError> log_batch(std::span<const WalEntry> entries);
 
   // Force fsync without appending (used on commit / destructor).
   [[nodiscard]] std::expected<void, WalError> flush();

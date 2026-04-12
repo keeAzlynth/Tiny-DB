@@ -1,101 +1,85 @@
 #include "../../include/storage/file.h"
-#include <iostream>
-
-// 打开文件，可选择创建新文件
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <filesystem>
+#include <stdexcept>
+#include <iostream>
+#include <cstdio>
 
 bool StdFile::open(const std::string& filename, bool create) {
   filename_ = filename;
 
-  if (create) {
-    // 创建空文件
-    std::ofstream(filename, std::ios::binary | std::ios::trunc).close();
-  } else if (!std::filesystem::exists(filename)) {
-    std::cerr << "File does not exist: " << filename << std::endl;
-    return false;  // 文件不存在，返回错误
-  }
+  int flags = create ? (O_RDWR | O_CREAT | O_TRUNC) : O_RDWR;
+  fd_       = ::open(filename.c_str(), flags, 0644);
 
-  // 尝试以读写模式打开
-  file_.open(filename, std::ios::in | std::ios::out | std::ios::binary);
-
-  if (!file_.is_open()) {
+  if (fd_ < 0) {
     std::cerr << "Failed to open file: " << filename << std::endl;
     perror("Error");
+    return false;
   }
-
-  return file_.is_open();
+  return true;
 }
-// 创建文件并写入数据
+
+bool StdFile::is_open() const {
+  return fd_ >= 0;
+}
+
 bool StdFile::create(const std::string& filename, const std::vector<uint8_t>& data) {
   if (!open(filename, true)) {
     return false;
   }
   if (!data.empty()) {
-    file_.seekp(0);
-    file_.write(reinterpret_cast<const char*>(data.data()), data.size());
-    file_.flush();
+    ssize_t n = ::pwrite(fd_, data.data(), data.size(), 0);
+    if (n < 0 || static_cast<size_t>(n) != data.size()) {
+      return false;
+    }
+    ::fsync(fd_);
   }
-  return file_.good();
+  return true;
 }
 
-// 读取数据
-std::vector<uint8_t> StdFile::read(size_t offset = 0, size_t length = SIZE_MAX) {
-  if (!file_.is_open())
-    throw std::runtime_error("File not open");
-
+// pread 不修改文件偏移，多线程并发读安全
+std::vector<uint8_t> StdFile::read(size_t offset, size_t length) {
   size_t file_size = size();
   if (offset >= file_size)
-    throw std::out_of_range("Offset is beyond file size");
+    throw std::out_of_range("Offset beyond file size");
 
   size_t               read_size = std::min(length, file_size - offset);
   std::vector<uint8_t> buffer(read_size);
 
-  file_.seekg(offset);
-  file_.read(reinterpret_cast<char*>(buffer.data()), read_size);
+  ssize_t n = ::pread(fd_, buffer.data(), read_size, static_cast<off_t>(offset));
+  if (n < 0)
+    throw std::runtime_error("pread failed");
 
-  buffer.resize(file_.gcount());  // 调整为实际读取大小
+  buffer.resize(static_cast<size_t>(n));
   return buffer;
 }
-// 关闭文件
+
 void StdFile::close() {
-  if (file_.is_open()) {
-    sync();
-    file_.close();
+  if (fd_ >= 0) {
+    ::fsync(fd_);
+    ::close(fd_);
+    fd_ = -1;
   }
 }
 
-// 获取文件大小
-size_t StdFile::size() {
-  if (!file_.is_open()) {
-    throw std::runtime_error("File not open");
-  }
-  auto current_pos = file_.tellg();
-  file_.seekg(0, std::ios::end);
-  size_t file_size = file_.tellg();
-  file_.seekg(current_pos, std::ios::beg);  // 恢复原位置
-  return file_size;
+size_t StdFile::size() const {
+  struct stat st;
+  if (::fstat(fd_, &st) < 0)
+    throw std::runtime_error("fstat failed");
+  return static_cast<size_t>(st.st_size);
 }
 
-// 从指定偏移写入数据
-bool StdFile::write(size_t offset, const void* data, size_t size) {
-  if (!file_.is_open()) {
-    return false;
-  }
-  file_.seekp(offset, std::ios::beg);
-  file_.write(static_cast<const char*>(data), size);
-  return file_.good();
+bool StdFile::write(size_t offset, const void* data, size_t sz) {
+  ssize_t n = ::pwrite(fd_, data, sz, static_cast<off_t>(offset));
+  return n == static_cast<ssize_t>(sz);
 }
 
-// 同步数据到磁盘
 bool StdFile::sync() {
-  if (!file_.is_open()) {
-    return false;
-  }
-  file_.flush();
-  return file_.good();
+  return ::fsync(fd_) == 0;
 }
 
-// 删除文件
 bool StdFile::remove() {
   close();
   return std::remove(filename_.c_str()) == 0;

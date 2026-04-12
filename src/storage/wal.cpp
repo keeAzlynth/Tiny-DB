@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <ranges>
-#include <stdexcept>
 
 // ─── CRC-32C (Castagnoli) ─────────────────────────────────────────────────────
 namespace {
@@ -61,8 +59,6 @@ template <std::integral T>
 
 }  // namespace
 
-// ─── Constructor ─────────────────────────────────────────────────────────────
-
 WAL::WAL(std::string_view log_dir, uint64_t checkpoint_tranc_id, uint64_t clean_interval_s,
          uint64_t file_size_limit)
     : file_size_limit_(file_size_limit),
@@ -80,10 +76,12 @@ WAL::WAL(std::string_view log_dir, uint64_t checkpoint_tranc_id, uint64_t clean_
   cleaner_thread_ = std::thread(&WAL::cleaner, this);
 }
 
-// ─── Destructor ───────────────────────────────────────────────────────────────
-
 WAL::~WAL() {
-  flush();  // ensure everything is fsync'd
+  if (auto result = flush(); !result) {
+    // 记录错误，例如写入 stderr 或日志文件
+    std::fprintf(stderr, "WAL flush failed during destruction: error %d\n",
+                 static_cast<int>(result.error()));
+  }
 
   {
     std::lock_guard lk(cleaner_mutex_);
@@ -96,8 +94,6 @@ WAL::~WAL() {
   log_file_.close();
 }
 
-// ─── flush ────────────────────────────────────────────────────────────────────
-
 std::expected<void, WalError> WAL::flush() {
   std::lock_guard lk(write_mutex_);
   if (!log_file_.sync())
@@ -105,23 +101,59 @@ std::expected<void, WalError> WAL::flush() {
   return {};
 }
 
-// ─── set_checkpoint_tranc_id ──────────────────────────────────────────────────
-
 void WAL::set_checkpoint_tranc_id(uint64_t id) noexcept {
   std::lock_guard lk(cp_mutex_);
   checkpoint_tranc_id_ = id;
 }
 
-// ─── log (policy dispatch) ────────────────────────────────────────────────────
-
 std::expected<void, WalError> WAL::log(const WalEntry& entry) {
-  if constexpr (Global_::WAL_WRITE_POLICY == Global_::WalWritePolicy::kPipelined)
+  if constexpr (Global_::WAL_WRITE_POLICY == Global_::WalWritePolicy::kPipelined) {
     return log_pipelined(entry);
-  else
+  } else {
     return log_unordered(entry);
+  }
 }
 
-// ─── Unordered path ───────────────────────────────────────────────────────────
+// ─── log_batch ────────────────────────────────────────────────────────────────
+//
+//  Writes every entry in `entries` to the WAL and issues exactly one fsync,
+//  regardless of WAL_WRITE_POLICY.  Holding write_mutex_ for the full batch
+//  provides atomic durability: either all entries are fsynced or the call
+//  returns an error.
+//
+//  Design notes:
+//  • Bypassing pipelining is intentional – a batch is already a "group write"
+//    and grouping groups adds no benefit.
+//  • Concurrent single log() calls in kPipelined mode will queue behind this
+//    batch's write_mutex_ hold, which is correct behaviour.
+//  • On error, entries already written to the kernel buffer are NOT rolled
+//    back.  Callers must treat a WAL write failure as fatal and stop accepting
+//    new writes.
+
+std::expected<void, WalError> WAL::log_batch(std::span<const WalEntry> entries) {
+  if (entries.empty())
+    return {};
+
+  std::lock_guard lk(write_mutex_);
+
+  for (const auto& e : entries) {
+    if (auto r = write_entry_blocks(e); !r)
+      return r;
+  }
+
+  if (log_file_.size() > file_size_limit_) {
+    // Rolling the file here keeps each WAL segment bounded; the cleaner will
+    // eventually remove segments whose entries are all checkpointed.
+    reset_file();
+    // reset_file() does its own fsync on the old file before rotating.
+    return {};
+  }
+
+  if (!log_file_.sync())
+    return std::unexpected(WalError::kSyncFailed);
+
+  return {};
+}
 // Each caller independently serialises through write_mutex_.
 // No grouping; lock is held only for one entry's write + fsync.
 
@@ -135,21 +167,6 @@ std::expected<void, WalError> WAL::log_unordered(const WalEntry& entry) {
     return std::unexpected(WalError::kSyncFailed);
   return {};
 }
-
-// ─── Pipelined path ───────────────────────────────────────────────────────────
-//
-//  Timeline (T1 = leader, T2/T3 = followers):
-//
-//   T1: enqueue → try_lock(write_mutex_) succeeds
-//       → drain queue (may collect T2 if T2 already enqueued)
-//       → write WAL for whole group
-//       → fsync
-//       → signal all members (sets done=true on their Writers)
-//       → release write_mutex_           ← T3 can start its WAL write HERE
-//   T1: sees done=true on its own Writer, returns
-//   T1: caller writes MemTable           ← parallel with T3's WAL write
-//
-//  Followers wait on their Writer::cv; they never hold write_mutex_.
 
 std::expected<void, WalError> WAL::log_pipelined(const WalEntry& entry) {
   Writer w{.entry = entry};
@@ -197,14 +214,15 @@ std::expected<void, WalError> WAL::write_group(std::span<Writer*> group) {
     if (auto r = write_entry_blocks(w->entry); !r)
       return r;
   }
-  if (log_file_.size() > file_size_limit_)
+  if (log_file_.size() > file_size_limit_) {
     reset_file();
+    return {};
+  }
+
   if (!log_file_.sync())
     return std::unexpected(WalError::kSyncFailed);
   return {};
 }
-
-// ─── Block-level I/O ─────────────────────────────────────────────────────────
 
 std::expected<void, WalError> WAL::write_entry_blocks(const WalEntry& entry) {
   const auto               payload = encode_payload(entry);
@@ -345,7 +363,7 @@ std::expected<std::map<uint64_t, std::vector<WalEntry>>, WalError> WAL::recover(
   std::ranges::sort(wal_files);
 
   for (const auto& [unused_sq, path] : wal_files) {
-    auto                 file      = FileObj::open(path, /*create=*/false);
+    auto                 file      = FileObj::open(path, false);
     size_t               file_size = file.size();
     size_t               offset    = 0;
     std::vector<uint8_t> scratch;  // accumulates record fragments
@@ -371,17 +389,14 @@ std::expected<std::map<uint64_t, std::vector<WalEntry>>, WalError> WAL::recover(
       }
 
       // Verify checksum
-      {
-        auto                 data = file.read_to_slice(offset + kHeaderSize, rec_len);
-        std::vector<uint8_t> check;
-        check.reserve(1 + rec_len);
-        check.push_back(rec_type);
-        check.insert(check.end(), data.begin(), data.end());
-        if (crc32c(std::span{check}) != stored_crc)
-          return std::unexpected(WalError::kChecksumMismatch);
-      }
+      auto                 data = file.read_to_slice(offset + kHeaderSize, rec_len);
+      std::vector<uint8_t> check;
+      check.reserve(1 + rec_len);
+      check.push_back(rec_type);
+      check.insert(check.end(), data.begin(), data.end());
+      if (crc32c(std::span{check}) != stored_crc)
+        return std::unexpected(WalError::kChecksumMismatch);
 
-      auto data = file.read_to_slice(offset + kHeaderSize, rec_len);
       offset += kHeaderSize + rec_len;
 
       bool complete = false;
@@ -495,6 +510,10 @@ std::vector<uint64_t> WAL::scan_tranc_ids(FileObj& file) noexcept {
 // ─── reset_file ──────────────────────────────────────────────────────────────
 
 void WAL::reset_file() {
+  if (log_file_.is_open()) {
+    log_file_.sync();  // 确保数据持久化
+    log_file_.close();
+  }
   const auto dot   = active_log_path_.find_last_of('.');
   const auto seq   = std::stoul(active_log_path_.substr(dot + 1)) + 1;
   active_log_path_ = active_log_path_.substr(0, dot + 1) + std::to_string(seq);
@@ -550,8 +569,8 @@ void WAL::cleanWALFile() {
   if (wal_files.size() <= 1)
     return;
 
-  for (size_t i = 0; i + 1 < wal_files.size(); ++i) {
-    auto       file = FileObj::open(wal_files[i].second, /*create=*/false);
+  for (auto& it : wal_files) {
+    auto       file = FileObj::open(it.second, false);
     const auto ids  = scan_tranc_ids(file);
 
     // Safe to delete only when every recorded tranc_id has been checkpointed.

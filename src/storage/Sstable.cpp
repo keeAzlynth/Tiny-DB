@@ -211,13 +211,9 @@ std::string Sstable::get_last_key() const {
 bool Sstable::is_block_index_vaild(size_t block_idx) const {
   return block_idx < block_metas.size() ? true : false;
 }
-std::optional<std::pair<std::string_view, uint64_t>> Sstable::KeyExists(std::string_view key,
-                                                                        uint64_t         tranc_id) {
+std::optional<std::pair<std::string, uint64_t>> Sstable::KeyExists(std::string_view key,
+                                                                   uint64_t         tranc_id) {
   if (key < first_key || key > last_key) {
-    return std::nullopt;
-  }
-  // 先在布隆过滤器判断key是否存在
-  if (bloom_filter != nullptr && !bloom_filter->possibly_contains(key)) {
     return std::nullopt;
   }
   auto block_idx_opt = find_block_idx(key);
@@ -226,7 +222,7 @@ std::optional<std::pair<std::string_view, uint64_t>> Sstable::KeyExists(std::str
   }
   auto block = read_block(block_idx_opt.value());
   auto res   = block->get_value_binary(key);
-  if (res.has_value() && res->second < tranc_id) {
+  if (res.has_value() && res->second <= tranc_id) {
     return res;
   }
   return std::nullopt;

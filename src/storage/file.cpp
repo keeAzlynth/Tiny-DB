@@ -128,6 +128,12 @@ bool FileObj::append(std::vector<uint8_t>& buffer) {
   return true;
 }
 
+bool FileObj::is_open() {
+  if (!m_file) {
+    return false;
+  }
+  return m_file->is_open();
+}
 bool FileObj::sync() {
   if (!m_file) {
     return false;
