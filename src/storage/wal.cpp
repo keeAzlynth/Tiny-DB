@@ -111,9 +111,8 @@ std::expected<void, WalError> WAL::log(const WalEntry& entry) {
     return log_pipelined(entry);
   } else {
     return log_unordered(entry);
-  }
 }
-
+}
 // ─── log_batch ────────────────────────────────────────────────────────────────
 //
 //  Writes every entry in `entries` to the WAL and issues exactly one fsync,
@@ -153,7 +152,7 @@ std::expected<void, WalError> WAL::log_batch(std::span<const WalEntry> entries) 
 
   return {};
 }
-// ─── Unordered path ───────────────────────────────────────────────────────────
+
 // Each caller independently serialises through write_mutex_.
 // No grouping; lock is held only for one entry's write + fsync.
 
