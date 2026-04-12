@@ -216,17 +216,13 @@ std::optional<std::pair<std::string, uint64_t>> Sstable::KeyExists(std::string_v
   if (key < first_key || key > last_key) {
     return std::nullopt;
   }
-  // 先在布隆过滤器判断key是否存在
-  if (bloom_filter != nullptr && !bloom_filter->possibly_contains(key)) {
-    return std::nullopt;
-  }
   auto block_idx_opt = find_block_idx(key);
   if (!block_idx_opt.has_value()) {
     return std::nullopt;
   }
   auto block = read_block(block_idx_opt.value());
   auto res   = block->get_value_binary(key);
-  if (res.has_value() && res->second < tranc_id) {
+  if (res.has_value() && res->second <= tranc_id) {
     return res;
   }
   return std::nullopt;

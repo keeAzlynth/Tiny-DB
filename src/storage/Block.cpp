@@ -101,8 +101,7 @@ std::string Block::get_key(const std::size_t offset) const {
   return std::string(reinterpret_cast<const char*>(Data_.data() + offset + sizeof(uint16_t)),
                      key_len);
 }
-std::optional<std::pair<std::string, uint64_t>> Block::get_value(
-    const std::size_t offset) const {
+std::optional<std::pair<std::string, uint64_t>> Block::get_value(const std::size_t offset) const {
   if (offset > Offset_[Offset_.size() - 1]) {
     spdlog::info("Block::get_value(const std::size_t offset) {} Invalid offset too much {}", offset,
                  Offset_[Offset_.size() - 1]);
@@ -110,28 +109,27 @@ std::optional<std::pair<std::string, uint64_t>> Block::get_value(
   }
 
   // 获取底层字节数据指针（unsigned char 类型）
-  const unsigned char* base = Data_.data();
+  const char* base = reinterpret_cast<const char*>(Data_.data());
 
   // 读取 key_len
   uint16_t key_len;
   std::memcpy(&key_len, base + offset, sizeof(uint16_t));
 
   // value_len 紧跟在 key 数据之后
-  const unsigned char* value_len_ptr = base + offset + sizeof(uint16_t) + key_len;
-  uint16_t             value_len;
+  const char* value_len_ptr = base + offset + sizeof(uint16_t) + key_len;
+  uint16_t    value_len;
   std::memcpy(&value_len, value_len_ptr, sizeof(uint16_t));
 
   // value 数据的起始位置
-  const unsigned char* value_start = value_len_ptr + sizeof(uint16_t);
+  const char* value_start = value_len_ptr + sizeof(uint16_t);
 
   // tr 紧跟在 value 数据之后
-  const unsigned char* tr_ptr = value_start + value_len;
-  uint64_t             tr;
+  const char* tr_ptr = value_start + value_len;
+  uint64_t    tr;
   std::memcpy(&tr, tr_ptr, sizeof(uint64_t));
 
-  // 构造 string_view，需要转换为 const char*
-  std::string value_view(reinterpret_cast<const char*>(value_start), value_len);
-  return std::make_pair(value_view, tr);
+  std::string value(reinterpret_cast<const char*>(value_start), value_len);
+  return std::make_pair(value, tr);
 }
 std::shared_ptr<Block::Entry> Block::get_entry(std::size_t offset) {
   if (offset > Offset_[Offset_.size() - 1]) {

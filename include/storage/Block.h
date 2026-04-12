@@ -28,7 +28,7 @@ class Block : public std::enable_shared_from_this<Block> {
   std::size_t                get_cur_size() const;
 
   std::optional<uint64_t>                              get_tranc_id(const std::size_t offset) const;
-  std::optional<std::pair<std::string, uint64_t>> get_value_binary(std::string_view key);
+  std::optional<std::pair<std::string_view, uint64_t>> get_value_binary(std::string_view key);
   bool                                                 KeyExists(std::string_view key);
   std::pair<std::string, std::string>                  get_first_and_last_key();
   bool          add_entry(const std::string& key, const std::string& value, const uint64_t tranc_id,
@@ -52,6 +52,6 @@ class Block : public std::enable_shared_from_this<Block> {
     const uint64_t tranc_id;
   };
   std::string                                          get_key(const std::size_t offset) const;
-  std::optional<std::pair<std::string, uint64_t>> get_value(const std::size_t offset) const;
+  std::optional<std::pair<std::string_view, uint64_t>> get_value(const std::size_t offset) const;
   std::shared_ptr<Block::Entry>                        get_entry(std::size_t offset);
 };
