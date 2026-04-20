@@ -184,7 +184,7 @@ void MemTable::put(const std::string& key, const std::string& value, const uint6
 
 void MemTable::put_mutex(const std::string& key, const std::string& value,
                          const uint64_t transaction_id) {
-  auto index = std::hash<std::string_view>{}(key) % Global_::NUMS_SHARDS;
+  auto index = Global_::fast_hash(key);
    bool need_freeze = false;
     {
       std::unique_lock<std::shared_mutex> lock(cur_lock_[index]);
@@ -203,14 +203,14 @@ void MemTable::put_batch(const std::vector<std::pair<std::string, std::string>>&
 
     // Sharding mode: distribute to appropriate shards
     for (const auto& pair : key_value_pairs) {
-      auto index = std::hash<std::string_view>{}(pair.first) % Global_::NUMS_SHARDS;
+      auto index = Global_::fast_hash(pair.first);
       std::unique_lock<std::shared_mutex> lock(cur_lock_[index]);
       current_table[index]->Insert(pair.first, pair.second, transaction_id);
   }
 }
 std::optional<std::pair<std::string, uint64_t>> MemTable::get(std::string_view key,
                                                               const uint64_t   transaction_id) {
-      auto index = std::hash<std::string_view>{}(key) % Global_::NUMS_SHARDS;
+      auto index = Global_::fast_hash(key);
 std::shared_lock<std::shared_mutex> lock(cur_lock_[index]);
     auto                                result = current_table[index]->Get(key, transaction_id);
     if (result.has_value()) {
