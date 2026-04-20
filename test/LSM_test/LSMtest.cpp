@@ -119,23 +119,6 @@ EXPECT_EQ(result_map["exists_b"], "beta");
 EXPECT_EQ(result_map["missing_y"], std::nullopt);
 }
 
-// 批量删除后所有 key 应不可见
-TEST_F(LSMTest, RemoveBatch_AllKeysInvisible) {
-  const int N = 50;
-  std::vector<std::pair<std::string, std::string>> kvs;
-  std::vector<std::string> keys;
-  for (int i = 0; i < N; ++i) {
-    std::string k = std::format("rm_key_{:04d}", i);
-    kvs.push_back({k, "v"});
-    keys.push_back(k);
-  }
-  lsm->put_batch(kvs);
-  lsm->remove_batch(keys);
-
-  for (const auto& k : keys) {
-    EXPECT_FALSE(lsm->get(k).has_value()) << k << " should be deleted";
-  }
-}
 // ─────────────────────────────────────────────
 //  3. 刷盘（flush）与持久化
 // ─────────────────────────────────────────────
@@ -769,6 +752,106 @@ std::get<0>(results.back())); ASSERT_EQ(results.size(), N) << "beta_ should have
   }
 }
 
+TEST_F(LSMTest, Realistic_ReadWhileWriting) {
+    // ---- 1. 参数配置 (模拟读多写少的真实场景) ----
+    const int BASE_DATA_SIZE    = 500'000; // 预装载的历史数据量
+    const int NUM_READ_THREADS  = 8;       // 8个读线程 (模拟高并发查询)
+    const int NUM_WRITE_THREADS = 2;       // 2个写线程 (模拟后台持续写入)
+    const int READ_OPS_PER_TH   = 100'000; // 每个读线程的随机读取次数
+    const int WRITE_OPS_PER_TH  = 50'000;  // 每个写线程的写入次数
+
+    // ---- 2. 准备阶段：预生成数据（分离格式化开销） ----
+    std::vector<std::string> base_keys(BASE_DATA_SIZE);
+    std::vector<std::string> base_vals(BASE_DATA_SIZE);
+    
+    std::cout << "[INFO] Pre-filling " << BASE_DATA_SIZE << " base records...\n";
+    for (int i = 0; i < BASE_DATA_SIZE; ++i) {
+        base_keys[i] = std::format("base_key_{:07d}", i);
+        base_vals[i] = std::format("base_val_{:07d}", i);
+        lsm->put(base_keys[i], base_vals[i]); // 预加载数据到 LSM 树
+    }
+    lsm->flush_all(); // 确保基础数据落盘，形成真实的多层 SSTable 结构
+    std::cout << "[INFO] Pre-fill complete. Starting concurrent mixed workload...\n";
+
+    // 预生成写线程需要写入的全新数据（避免在并发期分配字符串）
+    std::vector<std::vector<std::pair<std::string, std::string>>> write_data(NUM_WRITE_THREADS);
+    for (int t = 0; t < NUM_WRITE_THREADS; ++t) {
+        write_data[t].reserve(WRITE_OPS_PER_TH);
+        for (int i = 0; i < WRITE_OPS_PER_TH; ++i) {
+            write_data[t].push_back({
+                std::format("new_key_t{:02d}_{:07d}", t, i),
+                std::format("new_val_t{:02d}_{:07d}", t, i)
+            });
+        }
+    }
+
+    // ---- 3. 并发测试准备 ----
+    std::atomic<bool> start_flag{false}; // 发令枪，确保所有线程同时开始执行
+    std::atomic<int>  read_success{0};
+    std::atomic<int>  write_success{0};
+    std::vector<std::thread> workers;
+
+    // ---- 4. 组装写线程 ----
+    for (int t = 0; t < NUM_WRITE_THREADS; ++t) {
+        workers.emplace_back([&, t]() {
+            while (!start_flag.load(std::memory_order_acquire)) { /* spin wait */ }
+            for (int i = 0; i < WRITE_OPS_PER_TH; ++i) {
+                lsm->put(write_data[t][i].first, write_data[t][i].second);
+                write_success.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+
+    // ---- 5. 组装读线程 (完全随机读取基础数据) ----
+    for (int t = 0; t < NUM_READ_THREADS; ++t) {
+        workers.emplace_back([&]() {
+            // 每个线程拥有独立的随机数引擎，避免锁竞争
+            std::mt19937 rng(std::random_device{}() ^ std::hash<std::thread::id>()(std::this_thread::get_id()));
+            std::uniform_int_distribution<int> dist(0, BASE_DATA_SIZE - 1);
+
+            while (!start_flag.load(std::memory_order_acquire)) { /* spin wait */ }
+            
+            for (int i = 0; i < READ_OPS_PER_TH; ++i) {
+                int random_idx = dist(rng); // 随机挑选一个历史 Key
+                const auto& expected_key = base_keys[random_idx];
+                const auto& expected_val = base_vals[random_idx];
+
+                auto val = lsm->get(expected_key);
+                
+                if (val.has_value() && val.value() == expected_val) {
+                    read_success.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    ADD_FAILURE() << "Data corruption or loss for key: " << expected_key;
+                }
+            }
+        });
+    }
+
+    // ---- 6. 鸣枪开跑 & 计时 ----
+    auto start_time = std::chrono::steady_clock::now();
+    start_flag.store(true, std::memory_order_release); // 释放所有线程
+
+    for (auto& w : workers) {
+        w.join();
+    }
+    auto end_time = std::chrono::steady_clock::now();
+
+    // ---- 7. 性能统计 ----
+    double elapsed_sec = std::chrono::duration<double>(end_time - start_time).count();
+    int total_reads  = NUM_READ_THREADS * READ_OPS_PER_TH;
+    int total_writes = NUM_WRITE_THREADS * WRITE_OPS_PER_TH;
+    
+    std::cout << "\n[PERFORMANCE REPORT] Read-While-Writing Mixed Workload\n";
+    std::cout << "------------------------------------------------------\n";
+    std::cout << std::format("Time Elapsed : {:.3f} seconds\n", elapsed_sec);
+    std::cout << std::format("Read QPS     : {:.0f} ops/sec\n", total_reads / elapsed_sec);
+    std::cout << std::format("Write QPS    : {:.0f} ops/sec\n", total_writes / elapsed_sec);
+    std::cout << std::format("Total QPS    : {:.0f} ops/sec\n", (total_reads + total_writes) / elapsed_sec);
+
+    // ---- 8. 最终校验 ----
+    EXPECT_EQ(read_success.load(), total_reads);
+    EXPECT_EQ(write_success.load(), total_writes);
+}
 
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);

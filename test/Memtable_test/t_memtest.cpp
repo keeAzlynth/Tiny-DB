@@ -317,11 +317,7 @@ TEST_F(MemtableTest, ConcurrentPutGet_Benchmark_Sharding) {
   std::print("\n=== ACTUAL SHARD NODE COUNTS AFTER WRITE ===\n");
   auto   shard_counts = memtable_shard->getShardNodeCounts();
   size_t total_nodes  = 0;
-  for (size_t i = 0; i < shard_counts.size(); ++i) {
-    std::print("Shard[{}]: {} nodes\n", i, shard_counts[i]);
-    total_nodes += shard_counts[i];
-  }
-  std::print("Total nodes: {}\n", total_nodes);
+  
 
   std::vector<std::thread> readers;
   std::atomic<int>         found_count{0};
@@ -352,9 +348,83 @@ TEST_F(MemtableTest, ConcurrentPutGet_Benchmark_Sharding) {
   std::print("\n===SHARDING (open_shard=true) ===\n");
   std::print("Write: {} ops in {:.3f}s => {:.0f} QPS\n", TOTAL_OPS, write_sec, write_qps);
   std::print("Read:  {} ops in {:.3f}s => {:.0f} QPS\n", TOTAL_OPS, read_sec, read_qps);
-
+  for (size_t i = 0; i < shard_counts.size(); ++i) {
+    std::print("Shard[{}]: {} nodes\n", i, shard_counts[i]);
+    total_nodes += shard_counts[i];
+  }
   EXPECT_EQ(write_success.load(), TOTAL_OPS);
   EXPECT_EQ(found_count.load(), TOTAL_OPS);
+}
+TEST_F(MemtableTest, ConcurrentReadWrite_Correct_Sharding) {
+    auto memtable_shard = std::make_unique<MemTable>();
+
+    const int BASE_COUNT = 500'000;   // 预装载数量
+    const int OP_COUNT   = 500'000;   // 并发操作数量
+    const int NUM_THREADS = 10;       // 总线程数（5读5写）
+
+    // ---- 1. 准备数据 ----
+    std::vector<std::pair<std::string, std::string>> base_data(BASE_COUNT);
+    std::vector<std::pair<std::string, std::string>> new_data(OP_COUNT);
+    for (int i = 0; i < BASE_COUNT; ++i) {
+        base_data[i] = {std::format("base_{:07d}", i), std::format("val_{:07d}", i)};
+    }
+    for (int i = 0; i < OP_COUNT; ++i) {
+        new_data[i] = {std::format("new_{:07d}", i), std::format("val_{:07d}", i)};
+    }
+
+    // ---- 2. 预装载：保证读线程一定能读到数据 ----
+    for (const auto& kv : base_data) {
+        memtable_shard->put_mutex(kv.first, kv.second);
+    }
+
+    std::atomic<bool> start_flag{false};
+    std::atomic<int> read_hits{0};
+    std::vector<std::thread> workers;
+
+    // ---- 3. 启动并发写线程 (写入全新 Key) ----
+    for (int t = 0; t < NUM_THREADS / 2; ++t) {
+        workers.emplace_back([&, t]() {
+            while (!start_flag.load(std::memory_order_acquire)); 
+            int chunk = OP_COUNT / (NUM_THREADS / 2);
+            for (int i = t * chunk; i < (t + 1) * chunk; ++i) {
+                memtable_shard->put_mutex(new_data[i].first, new_data[i].second);
+            }
+        });
+    }
+
+    // ---- 4. 启动并发读线程 (随机读预装载的 Key) ----
+    for (int t = 0; t < NUM_THREADS / 2; ++t) {
+        workers.emplace_back([&]() {
+            std::mt19937 rng(std::random_device{}());
+            std::uniform_int_distribution<int> dist(0, BASE_COUNT - 1);
+            
+            while (!start_flag.load(std::memory_order_acquire));
+            
+            for (int i = 0; i < (OP_COUNT / (NUM_THREADS / 2)); ++i) {
+                int idx = dist(rng);
+                auto val = memtable_shard->get(base_data[idx].first);
+                
+                // 此时，val 必须 has_value，因为是预装载的
+                if (val.has_value() && val.value().first == base_data[idx].second) {
+                    read_hits.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    // 如果进到这里，说明并发下的索引逻辑出 Bug 了
+                    ADD_FAILURE() << "Base key should always be found!";
+                }
+            }
+        });
+    }
+
+    // ---- 5. 计时开始 ----
+    auto start_time = std::chrono::steady_clock::now();
+    start_flag.store(true);
+    for (auto& w : workers) w.join();
+    auto end_time = std::chrono::steady_clock::now();
+
+    // ---- 6. 结果汇报 ----
+    double sec = std::chrono::duration<double>(end_time - start_time).count();
+    std::print("Concurrent Mixed QPS: {:.0f}\n", (BASE_COUNT + OP_COUNT) / sec);
+    EXPECT_EQ(read_hits.load(), OP_COUNT); // 校验读命中的次数是否等于预期的操作数
 }
 
 int main(int argc, char** argv) {
