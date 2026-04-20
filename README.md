@@ -146,23 +146,11 @@ ctest --output-junit test_results.xml
 ## 性能基准
 
 ### 基准测试结果
-
-在标准测试环境下的 Memtable 并发性能表现：
-- Tony-DB的读写测试
-| 操作类型 | QPS | 测试场景 | 说明 |
-| 写入 (Put) | ? | 并发写入 | Bloomfiler加速 |
-| 读取 (Get) | ? | 并发读取 | 基于曾级的查询 |
-| 混合读写 | ? | 并发读写混合 | 50% 读 + 50% 写 |
-
-- Memtable的读写测试
-
-| 操作类型 | QPS | 测试场景 | 说明 |
-| 写入 (Put) | 718,325 | 并发写入 (8 Shards) | 内存表分片写入，无锁竞争 |
-| 读取 (Get) | 1,230,512 | 并发读取 | 基于跳表的点查询 |
-| 混合读写 | 1,133,615 | 并发读写混合 | 50% 读 + 50% 写 |
-
-
-
+![concurrency_scaling](bench_output/bench_concurrency_scaling.png)
+![latency-cdf](bench_output/bench_latency_cdf.png)
+![latency_percentiles](bench_output/bench_latency_percentiles.png)
+![charts](bench_output/benchmark_charts.png)
+[more report](bench_output/benchmark_report.md)
 ## 贡献指南
 
 我们欢迎社区贡献！请遵循以下步骤：
