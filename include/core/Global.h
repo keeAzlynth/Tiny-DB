@@ -7,14 +7,16 @@ namespace Global_ {
 constexpr int              FIX_LEVEL   = 5;
 constexpr int              MAX_LEVEL   = 12;
 constexpr int              NUMS_SHARDS = 8;  // 分片数量
-constexpr int              MAX_MEMTABLE_SIZE_PER_TABLE       = 1024 * 1024 * 3;  // 3MB
-constexpr int              MAX_SSTABLE_SIZE                  = 1024 * 1024 * 3;  // 3MB
-constexpr int              Block_SIZE                        = 1024 * 4;         // 4KB
-constexpr int              Block_CACHE_capacity              = 1024 * 64;
+constexpr int              MAX_MEMTABLE_SIZE_PER_TABLE       = 1024ULL * 1024 * 3;  // 3MB
+constexpr int              MAX_SSTABLE_SIZE                  = 1024ULL * 1024 * 3;  // 3MB
+constexpr int              Block_SIZE                        = 1024ULL * 4;         // 4KB
+constexpr int              Block_CACHE_capacity              = 1024ULL*1024 * 256; //256MB
 constexpr int              Block_CACHE_K                     = 2;
 constexpr int              LSM_SST_LEVEL_RATIO               = 4;
-constexpr int              bloom_filter_expected_size_       = 65536;
+constexpr int              bloom_filter_expected_size_       = 1024ULL*64;
 constexpr double           bloom_filter_expected_error_rate_ = 0.01;
+constexpr size_t L1_BUDGET_MB =
+    10 * NUMS_SHARDS * MAX_MEMTABLE_SIZE_PER_TABLE / (1024ULL * 1024);
 constexpr std::string_view WAL_DIR                           = "data/wal";
 constexpr bool WAL_SYNC_ON_WRITE = false;  // 改为 false 开启 group-only sync
 constexpr int              WAL_BLOCK_SIZE       = 1024 * 32;         // 32 KB  (already present)

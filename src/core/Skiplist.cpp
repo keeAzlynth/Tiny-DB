@@ -86,10 +86,11 @@ bool Skiplist::Insert(std::string key, std::string value, const uint64_t transac
     }
     current_level = Newlevel;  // 提前更新 current_level
   }
-  size_bytes += (key.size() + value.size() + sizeof(uint64_t) + 8 * (Global_::FIX_LEVEL + 1));
+ 
   // 创建新节点
   auto NewNode = std::make_unique<Node>(key, value, transaction_id);
-  // 插入新节点
+  // 插入新节点 
+  size_bytes += (key.size() + value.size() + sizeof(uint64_t) + 8 * (Global_::FIX_LEVEL + 1));
   for (int i = 0; i < Newlevel; i++) {
     NewNode->forward[i]   = update[i]->forward[i];
     update[i]->forward[i] = NewNode.get();

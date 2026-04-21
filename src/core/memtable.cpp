@@ -334,7 +334,7 @@ bool MemTable::frozen_cur_table(bool force, size_t target) {
   if (!force) {
     // ── non-force: freeze only the target shard ───────────────────────────
     std::unique_lock<std::shared_mutex> lock(cur_lock_[target]);
-    if (current_table[target]->get_size() == 0) return false;
+    if (current_table[target]->getnodecount()==0||current_table[target]->get_size() == 0) return false;
     if (current_table[target]->get_size() < Global_::MAX_MEMTABLE_SIZE_PER_TABLE)
       return false;
 
