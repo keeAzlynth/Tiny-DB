@@ -1,10 +1,3 @@
-明白你的意思了。之前我误以为你要精简内容，其实你是希望**修复原文档的格式问题**，尤其是那些 Mermaid 图表在普通 Markdown 渲染器里无法显示的问题。现在我直接基于你提供的原始内容，做一次 **可读性修复 + 图表纯文本化**，保留全部章节信息，只让图表正常呈现。
-
-下面是优化后的文档，图表全部替换为表格或清晰的文字说明，图片链接保留但添加了备用描述。
-
----
-
-```markdown
 [TOC]
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keeAzlynth/Tiny-DB)
 
