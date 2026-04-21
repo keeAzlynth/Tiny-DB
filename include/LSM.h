@@ -2,7 +2,7 @@
 #include "core/Global.h"
 #include "iterator/SstableIterator.h"
 #include "core/memtable.h"
-#include "compaction/Manifest.h"      // ← new: SstMeta + Manifest
+#include "compaction/Manifest.h"      
 #include "storage/Sstable.h"
 #include "iterator/TmergeIterator.h"
 #include "storage/wal.h"
@@ -82,19 +82,25 @@ class LSM_Engine : public std::enable_shared_from_this<LSM_Engine> {
   std::mutex              compaction_mutex_;
   std::condition_variable compaction_cv_;
   std::atomic<bool>       stop_compaction_{false};
-
+ uint64_t drain_one_frozen_table();
   void compaction_worker();
   bool exit_valid_sst_iter(std::vector<SstIterator>& sst_iters);
   std::pair<size_t, size_t> find_the_small_kv(std::vector<SstIterator>& sst_iters);
   std::optional<std::string> find_smallest_compaction_key(const std::vector<SstIterator>& merged);
   std::vector<CompactionEntry> collect_compaction_entries(std::vector<SstIterator>& merged,const std::string&key);
   bool can_drop_tombstone(std::string_view key, size_t output_level) const ;
-  void full_compact(size_t src_level);
-  std::vector<std::shared_ptr<Sstable>> full_l0_l1_compact(std::vector<size_t>& l0_ids,
-                                                           std::vector<size_t>& l1_ids);
-  std::vector<std::shared_ptr<Sstable>> full_common_compact(std::vector<size_t>& lx_ids,
-                                                            std::vector<size_t>& ly_ids,
-                                                            size_t               level_y);
+ // compaction round-robin pointer: level → last compacted key
+std::unordered_map<size_t, std::string> compaction_pointer_;
+
+// new methods (replace full_compact / full_l0_l1_compact / full_common_compact)
+std::vector<size_t> find_overlapping_ssts(size_t level,
+                                           std::string_view min_key,
+                                           std::string_view max_key);
+size_t pick_compaction_index(size_t level);
+std::vector<std::shared_ptr<Sstable>> compact_ssts(const std::vector<size_t>& upper_ids,
+                                                    const std::vector<size_t>& lower_ids,
+                                                    size_t output_level);
+void leveled_compact(size_t src_level);
   std::vector<std::shared_ptr<Sstable>> gen_sst_from_iter(BaseIterator& iter,
                                                           size_t        target_sst_size,
                                                           size_t        target_level);

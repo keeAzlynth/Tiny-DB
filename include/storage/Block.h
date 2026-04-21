@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "../../include/core/Global.h"
 
 class BlockIterator;
 class Block : public std::enable_shared_from_this<Block> {

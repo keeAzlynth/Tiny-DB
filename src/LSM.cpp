@@ -466,7 +466,12 @@ uint64_t LSM_Engine::flush(bool force) {
     auto tid     = i.get_tranc_id();
     builder.add(kv.first, kv.second, tid);
   }
-
+ if (builder.estimated_size() == 0) {
+    spdlog::warn("Skipping empty Skiplist during flush, potential ghost table detected.");
+    next_sst_id--; // 回退 sst_id
+    return 0;
+  }
+ 
   auto new_sst = builder.build(block_cache, sst_path, new_sst_id);
   if (!new_sst) {
     // 没有生成 SST 文件，清理临时路径或直接返回
@@ -496,7 +501,7 @@ manifest_->sync();  // ensure durability of MANIFEST update before proceeding
   level_sst_ids[0].push_front(new_sst_id);
 
   if (level_sst_ids.count(0) && level_sst_ids[0].size() >= Global_::LSM_SST_LEVEL_RATIO)
-    full_compact(0);
+    leveled_compact(0);
 
   return max_tid;
 }
@@ -550,6 +555,57 @@ std::string LSM_Engine::get_sst_path(size_t sst_id, size_t target_level) {
   return ss.str();
 }
 
+uint64_t LSM_Engine::drain_one_frozen_table() {
+  std::unique_lock<std::shared_mutex> lock(ssts_mtx);
+
+  // 二次检查：拿到锁后再确认一次，避免和 flush_all() 竞争
+  auto res = memtable->flushtodisk();
+  if (!res) return 0;
+
+  Sstbuild     builder(Global_::Block_SIZE);
+  const size_t new_sst_id = next_sst_id.fetch_add(1);
+  const auto   sst_path   = get_sst_path(new_sst_id, 0);
+
+  for (auto i = res->begin(); i != res->end(); ++i) {
+    auto kv  = i.getValue();
+    auto tid = i.get_tranc_id();
+    builder.add(kv.first, kv.second, tid);
+  }
+
+  if (builder.estimated_size() == 0) {
+    spdlog::warn("drain_one: empty skiplist, skipping sst_id {}", new_sst_id);
+    next_sst_id--;
+    return 0;
+  }
+
+  auto new_sst = builder.build(block_cache, sst_path, new_sst_id);
+  if (!new_sst) {
+    next_sst_id--;
+    return 0;
+  }
+
+  auto [min_tid, max_tid] = new_sst->get_tranc_id_range();
+  manifest_->add_sst(SstMeta{
+      .sst_id       = new_sst_id,
+      .level        = 0,
+      .min_tranc_id = min_tid,
+      .max_tranc_id = max_tid,
+      .first_key    = new_sst->get_first_key(),
+      .last_key     = new_sst->get_last_key(),
+  });
+  manifest_->sync();
+
+  wal->set_checkpoint_tranc_id(manifest_->checkpoint_tranc_id());
+
+  ssts[new_sst_id] = new_sst;
+  level_sst_ids[0].push_front(new_sst_id);
+
+  if (level_sst_ids.count(0) &&
+      level_sst_ids[0].size() >= Global_::LSM_SST_LEVEL_RATIO)
+    leveled_compact(0);
+
+  return max_tid;
+}
 void LSM_Engine::compaction_worker() {
   while (true) {
     {
@@ -560,11 +616,12 @@ void LSM_Engine::compaction_worker() {
       });
     }
     if (stop_compaction_.load(std::memory_order_relaxed)) break;
-    if (!memtable->fixed_tables.empty())
-      flush();
+    // 而冻结的职责在 put_mutex 写路径里，worker 不应重复触发
+    while (!memtable->fixed_tables.empty()) {
+      drain_one_frozen_table();
+    }
   }
 }
-
 bool LSM_Engine::exit_valid_sst_iter(std::vector<SstIterator>& sst_iters) {
   for (auto& it : sst_iters)
     if (it.valid()) return true;
@@ -635,159 +692,229 @@ std::vector<CompactionEntry> LSM_Engine::collect_compaction_entries(std::vector<
   return entries;
 }
 
-// ─── full_compact ──────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+//  Leveled compaction helpers
+// ════════════════════════════════════════════════════════════════════════════
+
+// 找出 level 层里与 [min_key, max_key] 有 key range 交集的所有 sst_id。
+// L0: O(n)   — SST 之间可能重叠，必须全扫
+// L1+: O(log n + k) — SST 有序不重叠，二分定左边界，线性扫右边界
+std::vector<size_t> LSM_Engine::find_overlapping_ssts(
+    size_t level, std::string_view min_key, std::string_view max_key) {
+
+  auto it = level_sst_ids.find(level);
+  if (it == level_sst_ids.end()) return {};
+  const auto& ids = it->second;
+
+  std::vector<size_t> result;
+  if (ids.empty()) return result;
+
+  if (level == 0) {
+    result.reserve(ids.size());
+    for (auto id : ids) {
+      auto sit = ssts.find(id);
+      if (sit == ssts.end() || !sit->second) continue;
+      const auto& sst = sit->second;
+      // 交集条件：sst.first <= range.max  &&  sst.last >= range.min
+      if (sst->get_first_key() <= max_key && sst->get_last_key() >= min_key)
+        result.push_back(id);
+    }
+    return result;
+  }
+
+  // L1+：ids 按 sst_id 升序 == 按 first_key 升序（compaction 保证）
+  // 二分找第一个 last_key >= min_key 的 SST
+  size_t lo = 0, hi = ids.size();
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    auto sit = ssts.find(ids[mid]);
+    if (sit == ssts.end() || !sit->second || sit->second->get_last_key() < min_key)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  // 从 lo 开始线性扫，直到 first_key > max_key 为止
+  for (size_t i = lo; i < ids.size(); ++i) {
+    auto sit = ssts.find(ids[i]);
+    if (sit == ssts.end() || !sit->second) continue;
+    if (sit->second->get_first_key() > max_key) break;
+    result.push_back(ids[i]);
+  }
+  return result;
+}
+
+// 返回 level 层下一个要 compact 的 SST 在 level_sst_ids[level] 里的下标。
+// 依据 compaction_pointer_ 做 round-robin，保证 key space 均匀覆盖。
+size_t LSM_Engine::pick_compaction_index(size_t level) {
+  const auto& ids = level_sst_ids[level];
+  if (ids.empty()) return 0;
+
+  auto ptr_it = compaction_pointer_.find(level);
+  if (ptr_it == compaction_pointer_.end() || ptr_it->second.empty())
+    return 0;
+
+  const std::string& ptr = ptr_it->second;
+  // 找第一个 first_key > ptr 的 SST（即上次结束处的下一个）
+  for (size_t i = 0; i < ids.size(); ++i) {
+    auto sit = ssts.find(ids[i]);
+    if (sit == ssts.end() || !sit->second) continue;
+    if (sit->second->get_first_key() > ptr) return i;
+  }
+  return 0; // 整层扫完，回绕到头部
+}
+
+// 统一的合并函数，取代 full_l0_l1_compact / full_common_compact。
+// upper_ids + lower_ids 里的 SST 合并后输出到 output_level。
+std::vector<std::shared_ptr<Sstable>> LSM_Engine::compact_ssts(
+    const std::vector<size_t>& upper_ids,
+    const std::vector<size_t>& lower_ids,
+    size_t                     output_level) {
+
+  std::vector<std::shared_ptr<Sstable>> result;
+  result.reserve(upper_ids.size() + lower_ids.size() + 1);
+
+  // merge_sst_iterator 按值传参，这里构造临时 vector，copy 只含 size_t，开销极小
+  auto merged  = merge_sst_iterator(
+      std::vector<size_t>(upper_ids), std::vector<size_t>(lower_ids));
+  auto builder = std::make_unique<Sstbuild>(Global_::Block_SIZE);
+
+  auto flush_builder = [&] {
+    const size_t new_id = next_sst_id++;
+    auto new_sst = builder->build(block_cache, get_sst_path(new_id, output_level), new_id);
+    if (new_sst)
+      result.emplace_back(std::move(new_sst));
+    else
+      --next_sst_id;
+    builder->clean();
+  };
+
+  while (true) {
+    auto cur_key_opt = find_smallest_compaction_key(merged);
+    if (!cur_key_opt.has_value()) break;
+
+    const std::string& cur_key  = cur_key_opt.value();
+    auto               versions = collect_compaction_entries(merged, cur_key);
+    assert(!versions.empty());
+
+    const auto& best = versions[0]; // tranc_id 最大的版本（已降序排列）
+    if (best.value.empty() && can_drop_tombstone(cur_key, output_level))
+      continue; // 安全丢弃墓碑
+
+    builder->add(cur_key, best.value, best.tranc_id);
+    if (builder->estimated_size() >= Global_::MAX_SSTABLE_SIZE)
+      flush_builder();
+  }
+  if (builder->estimated_size() > 0)
+    flush_builder();
+
+  return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  leveled_compact — 
 //
-//  Crash-safety ordering:
-//    1. Write ADD_SST for every new SST to MANIFEST (fsynced).
-//       On crash here, old SSTs still exist and MANIFEST lists both — safe.
-//    2. Delete each old SST file, then write its REMOVE_SST (fsynced).
-//       On crash here, MANIFEST may list an already-deleted SST.
-//       Recovery simply skips missing files with a warning.
-//    3. Update in-memory index and recurse if the target level overflows.
+//  L0→L1：取全部 L0，找 L1 里的交集 SST，合并
+//  Ln→L(n+1)：round-robin 取一个 SST，找下层交集，合并
+//
+//  Crash-safety 顺序（与原来一致）：
+//    1. ADD_SST 写入 MANIFEST → fsync
+//    2. 删文件 + REMOVE_SST → fsync
+//    3. 更新内存索引
+// ════════════════════════════════════════════════════════════════════════════
+void LSM_Engine::leveled_compact(size_t src_level) {
+  const size_t dst_level = src_level + 1;
 
-void LSM_Engine::full_compact(size_t src_level) {
-  auto old_level_id_x = level_sst_ids[src_level];
-  auto old_level_id_y = level_sst_ids[src_level + 1];
+  // ── 1. 选出本次参与 compact 的 src SST ──────────────────────────────────
+  std::vector<size_t> src_ids;
+  if (src_level == 0) {
+    const auto& l0 = level_sst_ids[0];
+    src_ids.assign(l0.begin(), l0.end());
+  } else {
+    const auto& ids = level_sst_ids[src_level];
+    if (ids.empty()) return;
+    src_ids.push_back(ids[pick_compaction_index(src_level)]);
+  }
+  if (src_ids.empty()) return;
 
-  std::vector<size_t> lx_ids(old_level_id_x.begin(), old_level_id_x.end());
-  std::vector<size_t> ly_ids(old_level_id_y.begin(), old_level_id_y.end());
+  // ── 2. 计算 src SST 们的 key range union ─────────────────────────────────
+  std::string range_min = ssts[src_ids[0]]->get_first_key();
+  std::string range_max = ssts[src_ids[0]]->get_last_key();
+  for (size_t id : src_ids) {
+    const auto& s = ssts[id];
+    if (s->get_first_key() < range_min) range_min = s->get_first_key();
+    if (s->get_last_key()  > range_max) range_max = s->get_last_key();
+  }
 
+  // ── 3. 找 dst_level 里的交集 SST ────────────────────────────────────────
+  std::vector<size_t> dst_ids =
+      find_overlapping_ssts(dst_level, range_min, range_max);
+
+  // ── 4. 执行合并 ──────────────────────────────────────────────────────────
   std::vector<std::shared_ptr<Sstable>> new_ssts =
-      (src_level == 0) ? full_l0_l1_compact(lx_ids, ly_ids)
-                       : full_common_compact(lx_ids, ly_ids, src_level + 1);
+      compact_ssts(src_ids, dst_ids, dst_level);
 
-  const size_t target_level = src_level + 1;
-
-  // ── Step 1: ADD_SST for every newly produced SST ──────────────────────────
-  for (auto& sst : new_ssts) {
+  // ── 5. Manifest: 先 ADD 新 SST (crash 后旧 SST 仍在，安全) ─────────────
+  for (const auto& sst : new_ssts) {
     auto [min_tid, max_tid] = sst->get_tranc_id_range();
     manifest_->add_sst(SstMeta{
         .sst_id       = sst->get_sst_id(),
-        .level        = target_level,
+        .level        = dst_level,
         .min_tranc_id = min_tid,
         .max_tranc_id = max_tid,
         .first_key    = sst->get_first_key(),
         .last_key     = sst->get_last_key(),
     });
   }
-manifest_->sync();  // ensure durability of MANIFEST update before proceeding
-  // ── Step 2: delete old SSTs + write REMOVE_SST for each ──────────────────
-  for (auto old_id : old_level_id_x) {
-    level_size[src_level] -= ssts[old_id]->get_sst_size();
-    ssts[old_id]->del_sst();
-    ssts.erase(old_id);
-    manifest_->remove_sst(old_id);
-  }
-  for (auto old_id : old_level_id_y) {
-    level_size[target_level] -= ssts[old_id]->get_sst_size();
-    ssts[old_id]->del_sst();
-    ssts.erase(old_id);
-    manifest_->remove_sst(old_id);
-  }
-manifest_->sync();  // ensure durability of MANIFEST update before proceeding
-  level_sst_ids[src_level].clear();
-  level_sst_ids[target_level].clear();
-  cur_max_level = std::max(cur_max_level, target_level);
+  manifest_->sync();
 
-  // ── Step 3: register new SSTs in the in-memory index ─────────────────────
-  for (auto& sst : new_ssts) {
+  // ── 6. 删旧 SST + REMOVE_SST ────────────────────────────────────────────
+  auto erase_ssts = [&](const std::vector<size_t>& ids, size_t level) {
+    for (auto id : ids) {
+      level_size[level] -= ssts[id]->get_sst_size();
+      ssts[id]->del_sst();
+      ssts.erase(id);
+      manifest_->remove_sst(id);
+    }
+  };
+  erase_ssts(src_ids, src_level);
+  erase_ssts(dst_ids, dst_level);
+  manifest_->sync();
+
+  // ── 7. 更新内存索引 ──────────────────────────────────────────────────────
+  if (src_level == 0) {
+    level_sst_ids[0].clear();
+  } else {
+    auto& dq = level_sst_ids[src_level];
+    for (auto id : src_ids) {
+      if (auto it = std::ranges::find(dq, id); it != dq.end())
+        dq.erase(it);
+    }
+  }
+  {
+    auto& dq = level_sst_ids[dst_level];
+    for (auto id : dst_ids) {
+      if (auto it = std::ranges::find(dq, id); it != dq.end())
+        dq.erase(it);
+    }
+  }
+  cur_max_level = std::max(cur_max_level, dst_level);
+  for (const auto& sst : new_ssts) {
     const size_t id = sst->get_sst_id();
-    level_size[target_level] += sst->get_sst_size();
-    level_sst_ids[target_level].push_back(id);
+    level_size[dst_level] += sst->get_sst_size();
+    level_sst_ids[dst_level].push_back(id);
     ssts[id] = sst;
   }
-  std::sort(level_sst_ids[target_level].begin(), level_sst_ids[target_level].end());
+  // sst_id 升序 == first_key 升序，维持二分查找的前提
+  std::sort(level_sst_ids[dst_level].begin(), level_sst_ids[dst_level].end());
 
-  // Recurse if the target level is now over its size budget.
-  if (bytes_to_mb(level_size[target_level]) >= 10 * std::pow(10, src_level))
-    full_compact(target_level);
-}
+  // ── 8. 更新 round-robin 指针 ─────────────────────────────────────────────
+  compaction_pointer_[src_level] = std::move(range_max);
 
-// ─── compact helpers (unchanged) ──────────────────────────────────────────
-
-std::vector<std::shared_ptr<Sstable>> LSM_Engine::full_l0_l1_compact(
-    std::vector<size_t>& l0_ids, std::vector<size_t>& l1_ids) {
-  const size_t output_level = 1;
-  std::vector<std::shared_ptr<Sstable>> sst;
-  sst.reserve(std::max(l0_ids.size(), l1_ids.size()) + 1);
-  auto merged  = merge_sst_iterator(l0_ids, l1_ids);
-  auto builder = std::make_unique<Sstbuild>(Global_::Block_CACHE_capacity);
-
-  while (true) {
-    auto cur_key_opt = find_smallest_compaction_key(merged);
-    if (!cur_key_opt.has_value()) {
-      break;
-    }
-    const std::string cur_key  = cur_key_opt.value();
-    auto              versions = collect_compaction_entries(merged, cur_key);
- auto &it= versions[0];
- assert(!versions.empty());  // 如果触发，说明 SstIterator 没有正确推进
-    if (it.value.empty()&&can_drop_tombstone(cur_key,output_level)) {
-    continue;
-    }
-      builder->add(cur_key, it.value,it.tranc_id);
-    if (builder->estimated_size() >= Global_::MAX_SSTABLE_SIZE) {
-      size_t new_id = next_sst_id++;
-        auto new_sst = builder->build(block_cache, get_sst_path(new_id, output_level), new_id);
-    if (new_sst) {
-        sst.emplace_back(std::move(new_sst));
-    } else {
-        --next_sst_id;
-    }
-      builder->clean();
-    }
-  }
-  if (builder->estimated_size() > 0) {
-    size_t new_id = next_sst_id++;
-     auto new_sst = builder->build(block_cache, get_sst_path(new_id, output_level), new_id);
-    if (new_sst) {
-        sst.emplace_back(std::move(new_sst));
-    } else {
-        --next_sst_id;
-    }
-  }
-  return sst;
-}
-
-std::vector<std::shared_ptr<Sstable>> LSM_Engine::full_common_compact(
-    std::vector<size_t>& lx_ids, std::vector<size_t>& ly_ids, size_t level_y) {
-  std::vector<std::shared_ptr<Sstable>> sst;
-  sst.reserve(std::max(lx_ids.size(), ly_ids.size()) + 1);
-  auto merged  = merge_sst_iterator(lx_ids, ly_ids);
-  auto builder = std::make_unique<Sstbuild>(Global_::Block_CACHE_capacity);
- while (true) {
-    auto cur_key_opt = find_smallest_compaction_key(merged);
-    if (!cur_key_opt.has_value()) {
-      break;
-    }
-    const std::string cur_key  = cur_key_opt.value();
-    auto              versions = collect_compaction_entries(merged, cur_key);
- auto &it= versions[0];
-    if (it.value.empty()&&can_drop_tombstone(cur_key,level_y)) {
-    continue;
-    }
-      builder->add(cur_key, it.value,it.tranc_id);
-    if (builder->estimated_size() >= Global_::MAX_SSTABLE_SIZE) {
-      size_t new_id = next_sst_id++;
-       auto new_sst = builder->build(block_cache, get_sst_path(new_id, level_y), new_id);
-    if (new_sst) {
-        sst.emplace_back(std::move(new_sst));
-    } else {
-        --next_sst_id;
-    }
-      builder->clean();
-    }
-  }
-  if (builder->estimated_size() > 0) {
-    size_t new_id = next_sst_id++;
-     auto new_sst = builder->build(block_cache, get_sst_path(new_id, level_y), new_id);
-    if (new_sst) {
-        sst.emplace_back(std::move(new_sst));
-    } else {
-        --next_sst_id;
-    }
-  }
-  return sst;
+  // ── 9. dst_level 超限时级联触发 ─────────────────────────────────────────
+size_t budget_mb = Global_::L1_BUDGET_MB;
+  for (size_t i = 0; i < src_level; ++i) budget_mb *= 10; // 10^(src_level) MB
+  if (bytes_to_mb(level_size[dst_level]) >= budget_mb/2)
+    leveled_compact(dst_level);
 }
 
 std::vector<std::shared_ptr<Sstable>> LSM_Engine::gen_sst_from_iter(
@@ -864,7 +991,6 @@ std::vector<std::pair<std::string, std::optional<std::string>>> LSM::get_batch(
 
 std::vector<std::pair<std::string, std::string>> LSM::range(const std::string& /*start_key*/,
                                                              const std::string& /*end_key*/) {
-  // TODO: implement via Level_Iterator
   return {};
 }
 
@@ -894,6 +1020,11 @@ void LSM::clear() { engine->clear(); }
 void LSM::flush(bool force) { engine->flush(force); }
 
 void LSM::flush_all() {
-  while (engine->memtable->get_total_size() > 0)
-    engine->flush(true);
+    // 先冻结所有 shard
+    engine->memtable->frozen_cur_table(true);  
+    const int MAX_ITERS = 10000;
+    for (int i = 0; i < MAX_ITERS; ++i) {
+        if (engine->memtable->get_total_size() == 0) break;
+        engine->flush(true);
+    }
 }
