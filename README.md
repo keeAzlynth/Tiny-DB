@@ -273,6 +273,7 @@ int main() {
 - 仓库主页：https://github.com/keeAzlynth/Tiny-DB
 - 问题反馈：https://github.com/keeAzlynth/Tiny-DB/issues
 - DeepWiki：https://deepwiki.com/keeAzlynth/Tiny-DB
+- [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/keeAzlynth/Tiny-DB)
 - 邮箱 1：trongoneadam@gmail.com
 - 邮箱 2：1976909647@qq.com
 
