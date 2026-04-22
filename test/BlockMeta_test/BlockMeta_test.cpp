@@ -36,17 +36,20 @@ TEST_F(BlockMetaTest, BasicConstructors) {
   if (std::filesystem::exists(tmp_path1))
     std::filesystem::remove(tmp_path1);
 
-  Sstbuild builder(block_size, true);
+  Sstbuild builder(block_size);
   for (size_t i = 0; i < num_records; ++i) {
     memtable->put(key_prefix + std::to_string(i), "value" + std::to_string(i));
-    memtable->flushsync(builder);
   }
 
   try {
+    auto res=memtable->flushtodisk();
+    for (auto it=res->begin(); it!=res->end(); ++it) {
+      builder.add(it.getValue().first, it.getValue().second, it.get_tranc_id());
+    }
     sst             = builder.build(block_cache, tmp_path1, 0);
     auto asser_size = Global_::generateRandom(0, 499);
     for (auto i = 0; i < asser_size; ++i) {
-      auto res = sst->KeyExists(key_prefix + std::to_string(Global_::generateRandom(0, 499)));
+      auto res = sst->KeyExists(key_prefix + std::to_string(Global_::generateRandom(0, 499)),0);
     }
   } catch (const std::exception& e) {
     FAIL() << "Build failed: " << e.what();
