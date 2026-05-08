@@ -24,24 +24,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Ubuntu: 显式使用 GCC 14（ubuntu-24.04 apt 源已内置）
+          # ── Ubuntu: 与本地开发环境对齐到 GCC 14.x
           - os: ubuntu-24.04
             compiler: GCC-14
             cc: gcc-14
             cxx: g++-14
 
-          # ── Ubuntu: LLVM 官方源提供的 Clang 18
+          # ── Ubuntu: 使用更新的 Clang，并复用 GCC 14 的 libstdc++
           - os: ubuntu-24.04
-            compiler: Clang-18
-            cc: clang-18
-            cxx: clang++-18
+            compiler: Clang-19
+            cc: clang-19
+            cxx: clang++-19
             install_llvm: true   # 触发下面额外安装步骤
-
-          # ── macOS 15 = Xcode 16 = Apple Clang 16，支持完整 C++23
-          - os: macos-15
-            compiler: AppleClang-16
-            cc: clang
-            cxx: clang++
 
     defaults:
       run:
@@ -60,31 +54,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            ccache ninja-build \
+            ccache ninja-build gcc-14 g++-14 \
             libfmt-dev libgtest-dev libspdlog-dev
 
-      # ── GCC 14（ubuntu-24.04 官方源已有，直接装）
-      - name: Install GCC 14
-        if: runner.os == 'Linux' && matrix.cc == 'gcc-14'
-        run: sudo apt-get install -y gcc-14 g++-14
-
-      # ── Clang 18（需要 LLVM 官方源）
-      - name: Install Clang 18
+      # ── Clang 19（需要 LLVM 官方源）
+      - name: Install Clang 19
         if: matrix.install_llvm == true
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-18 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm18.list
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm19.list
           sudo apt-get update
-          sudo apt-get install -y clang-18 clang++-18
-
-      # ── macOS 依赖
-      - name: Install macOS dependencies
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install ccache fmt googletest ninja spdlog
+          sudo apt-get install -y clang-19
 
       - name: Export toolchain
         run: |
@@ -92,12 +74,6 @@ jobs:
           echo "CXX=${{ matrix.cxx }}" >> "$GITHUB_ENV"
           echo "CMAKE_C_COMPILER=${{ matrix.cc }}"   >> "$GITHUB_ENV"
           echo "CMAKE_CXX_COMPILER=${{ matrix.cxx }}" >> "$GITHUB_ENV"
-
-      - name: Export Homebrew prefix (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          echo "CMAKE_PREFIX_PATH=$(brew --prefix fmt);$(brew --prefix spdlog);$(brew --prefix googletest)" \
-            >> "$GITHUB_ENV"
 
       # ── 版本确认，方便排查
       - name: Show toolchain versions
