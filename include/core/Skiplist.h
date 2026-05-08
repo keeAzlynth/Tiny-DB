@@ -75,7 +75,12 @@ inline int cmp(std::string_view a, std::string_view b) {
 class Skiplist {
  public:
   explicit Skiplist(int max_level_ = Global_::MAX_LEVEL)
-      : max_level(max_level_), current_level(1), size_bytes(0), nodecount(0), dis(0.0, 1.0) {
+      : max_level(max_level_),
+        current_level(1),
+        size_bytes(0),
+        nodecount(0),
+        dis(0.0, 1.0),
+        num_shard_(0) {
     head = std::make_unique<Node>(std::string(), std::string(), 0);
   }  // 默认最大取决FIX_LEVEL层
   Skiplist(const Skiplist& other)            = delete;
