@@ -12,12 +12,14 @@
 
 class LSMTest : public ::testing::Test {
  protected:
-  std::string db_path = "../../../lsm/lsm_engine_test";
+  std::string db_path;
 
   void SetUp() override {
     // 用测试名作为路径，完全隔离
     const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-    db_path = std::format("../../../lsm/test_{}_{}", info->test_suite_name(), info->name());
+    db_path = (std::filesystem::temp_directory_path() /
+               std::format("lsm_test_{}_{}", info->test_suite_name(), info->name()))
+                  .string();
 
     if (std::filesystem::exists(db_path)) {
       std::filesystem::remove_all(db_path);
@@ -26,7 +28,15 @@ class LSMTest : public ::testing::Test {
     lsm = std::make_shared<LSM>(db_path);
   }
 
-  void TearDown() override { lsm.reset(); }
+  void TearDown() override {
+    lsm.reset();
+    try {
+      if (!db_path.empty() && std::filesystem::exists(db_path)) {
+        std::filesystem::remove_all(db_path);
+      }
+    } catch (...) {
+    }
+  }
 
   std::shared_ptr<LSM> lsm;
 };

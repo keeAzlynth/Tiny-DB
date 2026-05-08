@@ -20,11 +20,8 @@ class SstableTest : public ::testing::Test {
     // 初始化 BlockCache
     block_cache = std::make_shared<BlockCache>(4096, 2);
     memtable    = std::make_unique<MemTable>();
-    if (std::filesystem::exists(tmp_path1) && std::filesystem::exists(tmp_path2)) {
-    } else {
-      std::filesystem::create_directory(tmp_path1);
-      std::filesystem::create_directory(tmp_path2);
-    }
+    tmp_path1 = (std::filesystem::temp_directory_path() / "lsm_test_sstable.dat").string();
+    tmp_path2 = (std::filesystem::temp_directory_path() / "lsm_test_sstable2.dat").string();
   }
 
   void TearDown() override {
@@ -88,8 +85,8 @@ class SstableTest : public ::testing::Test {
 
   std::unique_ptr<MemTable>   memtable;
   std::shared_ptr<BlockCache> block_cache;
-  std::string tmp_path1 = "../../../lsm/lsm_test_sstable.dat";  // 改成你的绝对路径，方便调试
-  std::string tmp_path2 = "../../../lsm/lsm_test_sstable2.dat";
+  std::string tmp_path1;
+  std::string tmp_path2;
 };
 
 // 使用大量数据并强制产生多个 block，验证前缀查询和返回结果正确性
