@@ -118,7 +118,7 @@ bool Skiplist::Delete(std::string_view key) {
   auto target = current->forward[0];
   if (target && target->key_ == key) {
     for (int i = 0; i < current_level; ++i) {
-      if (update[i]) {
+      if (update[i] && update[i]->forward[i] == target) {
         update[i]->forward[i] = target->forward[i];
       }
     }
@@ -129,11 +129,8 @@ bool Skiplist::Delete(std::string_view key) {
   }
 
   // 更新当前层级
-  // 如果当前层级的节点为空，则需要更新当前层级
-  for (int i = current_level - 1; i >= 0; --i) {
-    if (head->forward[i] == nullptr && nodecount) {
-      current_level--;
-    }
+  while (current_level > 1 && head->forward[current_level - 1] == nullptr) {
+    current_level--;
   }
   return true;
 }
