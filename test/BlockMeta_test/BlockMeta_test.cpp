@@ -1,6 +1,7 @@
 #include "../../include/core/memtable.h"
 #include "../../include/storage/Sstable.h"
 #include <gtest/gtest.h>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -11,6 +12,7 @@ class BlockMetaTest : public ::testing::Test {
     meta        = BlockMeta("first", "last", 1024);
     block_cache = std::make_shared<BlockCache>(4096, 2);
     memtable    = std::make_shared<MemTable>();
+    tmp_path1   = (std::filesystem::temp_directory_path() / "lsm_test_BlockMeta.dat").string();
   }
   void TearDown() override {
     try {
@@ -23,7 +25,7 @@ class BlockMetaTest : public ::testing::Test {
   BlockMeta                   meta;
   std::shared_ptr<BlockCache> block_cache;
   std::shared_ptr<MemTable>   memtable;
-  std::string                 tmp_path1 = "/root/LSM/tmp/lsm_test_BlockMeta.dat";
+  std::string                 tmp_path1;
   std::shared_ptr<Sstable>    sst;
 };
 
