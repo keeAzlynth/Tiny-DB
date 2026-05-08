@@ -44,9 +44,11 @@ TEST_F(BlockMetaTest, BasicConstructors) {
   }
 
   try {
-    auto res=memtable->flushtodisk();
-    for (auto it=res->begin(); it!=res->end(); ++it) {
-      builder.add(it.getValue().first, it.getValue().second, it.get_tranc_id());
+    auto flush_results = memtable->flush();
+    for (auto& flush_result : flush_results) {
+      for (auto it = flush_result->begin(); it != flush_result->end(); ++it) {
+        builder.add(it.getValue().first, it.getValue().second, it.get_tranc_id());
+      }
     }
     sst             = builder.build(block_cache, tmp_path1, 0);
     auto asser_size = Global_::generateRandom(0, 499);
