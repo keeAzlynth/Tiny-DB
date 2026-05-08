@@ -23,6 +23,13 @@ endif()
 
 # 查找 GTest 包
 find_package(GTest REQUIRED)
+find_package(spdlog REQUIRED)
+find_package(fmt QUIET)
+
+if(NOT fmt_FOUND)
+    target_compile_definitions(spdlog::spdlog INTERFACE SPDLOG_FMT_EXTERNAL=OFF)
+endif()
+
 include_directories(${GTEST_INCLUDE_DIRS})
 
 # 添加源文件
@@ -46,10 +53,16 @@ add_executable(blockmeta_test
 
 # 链接 Google Test 库
 target_link_libraries(blockmeta_test
+    PRIVATE
     GTest::GTest
     GTest::Main
+    spdlog::spdlog
     pthread
 )
+
+if(TARGET fmt::fmt)
+    target_link_libraries(blockmeta_test PRIVATE fmt::fmt)
+endif()
 
 # 添加头文件路径
 target_include_directories(blockmeta_test PRIVATE
