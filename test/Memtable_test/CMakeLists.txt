@@ -78,9 +78,12 @@ target_link_libraries(memtable_test PRIVATE
     GTest::gtest 
     GTest::gtest_main 
     spdlog::spdlog
-    fmt::fmt
     pthread
 )
+
+if(TARGET fmt::fmt)
+    target_link_libraries(memtable_test PRIVATE fmt::fmt)
+endif()
 
 # 启用测试
 enable_testing()

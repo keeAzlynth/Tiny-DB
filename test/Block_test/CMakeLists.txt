@@ -61,12 +61,16 @@ add_executable(block_test
 
 # 链接库
 target_link_libraries(block_test
+    PRIVATE
     GTest::gtest
     GTest::gtest_main
     spdlog::spdlog
-    fmt::fmt
     pthread
 )
+
+if(TARGET fmt::fmt)
+    target_link_libraries(block_test PRIVATE fmt::fmt)
+endif()
 
 # 添加头文件路径
 target_include_directories(block_test PRIVATE

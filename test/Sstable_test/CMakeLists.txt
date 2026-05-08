@@ -97,10 +97,13 @@ target_include_directories(sstable_test PRIVATE ../../include)
 target_link_libraries(sstable_test PRIVATE 
     GTest::gtest 
     GTest::gtest_main 
-      spdlog::spdlog
-    fmt::fmt
+    spdlog::spdlog
     pthread
 )
+
+if(TARGET fmt::fmt)
+    target_link_libraries(sstable_test PRIVATE fmt::fmt)
+endif()
 
 # 启用测试
 enable_testing()

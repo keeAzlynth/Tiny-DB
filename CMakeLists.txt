@@ -35,8 +35,10 @@ if(TARGET fmt::fmt)
     target_link_libraries(lsm_lib PUBLIC fmt::fmt)
 endif()
 
-# ===== 4. 创建主程序（如果 main.cpp 存在） =====
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
+# ===== 4. 创建 benchmark 主程序（默认关闭，避免影响 CI / 测试构建） =====
+option(BUILD_BENCHMARK_MAIN "Build the benchmark entry from main.cpp" OFF)
+
+if(BUILD_BENCHMARK_MAIN AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
     add_executable(lsm_main main.cpp)
     target_link_libraries(lsm_main 
         PRIVATE 
